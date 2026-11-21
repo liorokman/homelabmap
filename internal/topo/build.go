@@ -20,7 +20,8 @@ type builder struct {
 
 	ipMAC map[string]string
 	udevs []uniDev
-	uclis []uniClient
+	uclis []uniClient // connected clients, then offline ones from history
+	known map[string]uniKnown
 
 	ents   []*entity
 	byKey  map[string]*entity
@@ -63,6 +64,12 @@ func Build(scanID int64, res *obs.Result, hist History) *Graph {
 		b.osScans[s.MAC] = s
 	}
 	b.udevs, b.uclis = parseUniFi(res.UniFi)
+	connected := map[string]bool{}
+	for _, c := range b.uclis {
+		connected[c.MAC] = true
+	}
+	b.uclis = append(b.uclis, parseUniFiHistory(res.UniFi, connected)...)
+	b.known = parseUniFiKnown(res.UniFi)
 
 	b.buildIPMAC()
 	b.buildEntities()
@@ -114,7 +121,9 @@ func Build(scanID int64, res *obs.Result, hist History) *Graph {
 	for _, e := range res.Errors {
 		b.warn("scanner: %s", e)
 	}
-	return b.output(scanID, gw)
+	g := b.output(scanID, gw)
+	linkRotated(g) // the controller's history can hold a phone's old MACs
+	return g
 }
 
 func depthKey(e *entity) int {
@@ -177,6 +186,9 @@ func (b *builder) namesOf(e *entity) []string {
 	if e.udev != nil {
 		add(e.udev.Name)
 	}
+	for _, m := range e.sortedMACs() {
+		add(b.known[m].Alias) // set by hand in UniFi: the best name there is
+	}
 	if e.guest != nil {
 		add(e.guest.Name)
 	}
@@ -190,6 +202,11 @@ func (b *builder) namesOf(e *entity) []string {
 	}
 	if e.ucli != nil {
 		add(e.ucli.Name)
+	}
+	if e.ssdp != nil && !e.infra {
+		add(e.ssdp.FriendlyName)
+	}
+	if e.ucli != nil {
 		add(e.ucli.Hostname)
 	}
 	for _, n := range e.lldpRefs {
@@ -200,6 +217,9 @@ func (b *builder) namesOf(e *entity) []string {
 	}
 	for _, ip := range b.sortedIPs(e) {
 		add(b.res.DNS[ip])
+	}
+	for _, m := range e.sortedMACs() {
+		add(b.known[m].Hostname)
 	}
 	if e.self {
 		add(e.selfName)
@@ -241,6 +261,9 @@ func (b *builder) vendorOf(e *entity) string {
 	}
 	if e.udev != nil {
 		return "Ubiquiti"
+	}
+	if e.ssdp != nil && e.ssdp.Manufacturer != "" {
+		return e.ssdp.Manufacturer
 	}
 	return ""
 }
@@ -355,6 +378,7 @@ func (b *builder) output(scanID int64, gw *entity) *Graph {
 		g.Edges = append(g.Edges, Edge{
 			ID: fmt.Sprintf("e%d", i), Source: src.nodeID, Target: dst.nodeID, Kind: kind,
 			SourcePort: sp, TargetPort: dp, Sources: slices.Sorted(maps.Keys(l.sources)),
+			Absent: src.absent() || dst.absent(),
 		})
 	}
 	return g
@@ -399,11 +423,19 @@ func (b *builder) node(e *entity, gw *entity) Node {
 		n.Model = e.udev.Model
 	case e.infra && e.dev() != nil:
 		n.Model = firstLine(e.dev().SysDescr)
+	case e.ssdp != nil:
+		n.Model = ssdpModel(e.ssdp)
 	}
 	if e.parent != nil {
 		n.Parent = e.parent.nodeID
 	}
 	n.Power, n.PowerState = e.power()
+	if e.absent() {
+		n.Absent = true
+		if n.Location != "" {
+			n.Location = "last seen: " + n.Location
+		}
+	}
 	for _, m := range e.sortedMACs() {
 		if s, ok := b.osScans[m]; ok && len(s.OpenPorts) > 0 {
 			n.OpenPorts = s.OpenPorts
@@ -426,12 +458,30 @@ func (b *builder) node(e *entity, gw *entity) Node {
 	}
 
 	n.IPv6, n.LastSeen = b.passive(e)
+	later := func(t time.Time) {
+		if t.After(n.LastSeen) {
+			n.LastSeen = t
+		}
+	}
+	if n.Power == PowerOn {
+		later(b.res.StartedAt)
+	}
 
 	var first time.Time
-	for m := range e.macs {
-		if t, ok := b.hist.FirstSeen[m]; ok && (first.IsZero() || t.Before(first)) {
+	earlier := func(t time.Time) {
+		if !t.IsZero() && (first.IsZero() || t.Before(first)) {
 			first = t
 		}
+	}
+	for m := range e.macs {
+		earlier(b.hist.FirstSeen[m])
+		// The controller's memory goes back further than homelabmap's.
+		earlier(b.known[m].FirstSeen)
+		later(b.known[m].LastSeen)
+	}
+	if e.ucli != nil {
+		earlier(e.ucli.FirstSeen)
+		later(e.ucli.LastSeen)
 	}
 	n.FirstSeen = first
 	cutoff := b.res.StartedAt.Add(-24 * time.Hour)
@@ -465,4 +515,17 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ssdpModel is "Maker Model" without repeating the maker.
+func ssdpModel(d *obs.SSDPDevice) string {
+	model := strings.TrimSpace(d.ModelName + " " + d.ModelNumber)
+	if d.ModelNumber != "" && strings.Contains(d.ModelName, d.ModelNumber) {
+		model = d.ModelName
+	}
+	maker := strings.TrimSuffix(d.Manufacturer, ".")
+	if maker == "" || strings.HasPrefix(strings.ToLower(model), strings.ToLower(strings.Fields(maker)[0])) {
+		return model
+	}
+	return strings.TrimSpace(maker + " " + model)
 }

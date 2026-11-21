@@ -68,8 +68,8 @@ func unifiCollect(ctx context.Context, cfg Config) (*obs.UniFi, error) {
 	// The classic Network API has switch ports, AP associations and
 	// fingerprints. Newer consoles accept API keys on it too.
 	legacy, lerr := unifiLegacy(ctx, c, cfg, hdr)
-	if lerr == nil {
-		return legacy, nil
+	if legacy != nil {
+		return legacy, lerr // lerr: only the optional extras failed
 	}
 	integ, ierr := unifiIntegration(ctx, c, cfg, hdr)
 	if ierr == nil {
@@ -99,7 +99,29 @@ func unifiLegacy(ctx context.Context, c *http.Client, cfg Config, hdr map[string
 	if sta.Meta.RC != "ok" {
 		return nil, fmt.Errorf("stat/sta: %s", sta.Meta.Msg)
 	}
-	return &obs.UniFi{Flavor: "legacy", Devices: dev.Data, Clients: sta.Data}, nil
+	u := &obs.UniFi{Flavor: "legacy", Devices: dev.Data, Clients: sta.Data}
+
+	// Aliases and history are extras: report failures, keep the rest.
+	var errs []error
+	var known struct {
+		Meta struct {
+			RC string `json:"rc"`
+		} `json:"meta"`
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := getJSON(ctx, c, base+"/rest/user", hdr, &known); err != nil {
+		errs = append(errs, fmt.Errorf("rest/user: %w", err))
+	} else {
+		u.Known = known.Data
+	}
+	if cfg.UniFiHistoryHours > 0 {
+		h := fmt.Sprintf("%s/proxy/network/v2/api/site/%s/clients/history?onlyNonBlocked=true&includeUnifiDevices=false&withinHours=%d",
+			cfg.UniFiURL, url.PathEscape(cfg.UniFiSite), cfg.UniFiHistoryHours)
+		if err := getJSON(ctx, c, h, hdr, &u.History); err != nil {
+			errs = append(errs, fmt.Errorf("client history: %w", err))
+		}
+	}
+	return u, errors.Join(errs...)
 }
 
 type integPage struct {

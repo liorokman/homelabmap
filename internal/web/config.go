@@ -21,8 +21,10 @@ type Config struct {
 
 	AgentToken string
 
-	OIDCIssuer        string
-	OIDCClientID      string
+	OIDCIssuer   string
+	OIDCClientID string
+	// OIDCProviderName labels the sign-in button ("Sign in with ...").
+	OIDCProviderName  string
 	OIDCClientSecret  string // optional: PKCE works with public clients
 	OIDCScopes        []string
 	OIDCAllowedGroups []string
@@ -31,7 +33,9 @@ type Config struct {
 	ScanInterval time.Duration
 	Retention    time.Duration
 	OSRescan     time.Duration
-	OSScanMax    int
+	// ForgetAfter drops absent devices from the map after this long.
+	ForgetAfter time.Duration
+	OSScanMax   int
 	// ProbeMaxPerHour caps quick scans of newly heard devices (0 = off).
 	ProbeMaxPerHour int
 
@@ -48,6 +52,7 @@ func LoadConfig() (Config, error) {
 		AgentToken:       os.Getenv("HOMELABMAP_AGENT_TOKEN"),
 		OIDCIssuer:       os.Getenv("HOMELABMAP_OIDC_ISSUER"),
 		OIDCClientID:     os.Getenv("HOMELABMAP_OIDC_CLIENT_ID"),
+		OIDCProviderName: os.Getenv("HOMELABMAP_OIDC_PROVIDER_NAME"),
 		OIDCClientSecret: os.Getenv("HOMELABMAP_OIDC_CLIENT_SECRET"),
 		OIDCScopes:       strings.Fields(env("HOMELABMAP_OIDC_SCOPES", "openid profile email")),
 	}
@@ -67,6 +72,7 @@ func LoadConfig() (Config, error) {
 		{&c.ScanInterval, "HOMELABMAP_SCAN_INTERVAL", time.Hour, 5 * time.Minute},
 		{&c.Retention, "HOMELABMAP_RETENTION", 14 * 24 * time.Hour, time.Hour},
 		{&c.OSRescan, "HOMELABMAP_OS_RESCAN", 7 * 24 * time.Hour, time.Hour},
+		{&c.ForgetAfter, "HOMELABMAP_FORGET_AFTER", 30 * 24 * time.Hour, time.Hour},
 	}
 	for _, d := range durations {
 		*d.dst = d.def

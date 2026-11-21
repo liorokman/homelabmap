@@ -262,7 +262,9 @@ func gz(b []byte) ([]byte, error) {
 func (s *Store) Complete(ctx context.Context, id int64, res *obs.Result, g *topo.Graph, now time.Time) error {
 	var seen []string
 	for _, n := range g.Nodes {
-		seen = append(seen, n.MACs...)
+		if !n.Absent {
+			seen = append(seen, n.MACs...)
+		}
 	}
 	return s.complete(ctx, id, res, g, seen, now)
 }
@@ -427,6 +429,23 @@ func (s *Store) StaleGraphs(ctx context.Context, version int, limit int) ([]int6
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// Graph returns one scan's stored graph.
+func (s *Store) Graph(ctx context.Context, id int64) (*topo.Graph, error) {
+	var gj sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT graph_json FROM scans WHERE id = ?`, id).Scan(&gj)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && !gj.Valid {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var g topo.Graph
+	if err := json.Unmarshal([]byte(gj.String), &g); err != nil {
+		return nil, err
+	}
+	return &g, nil
 }
 
 // UpdateGraph replaces a scan's graph (after an inference upgrade).

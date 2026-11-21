@@ -56,6 +56,17 @@ func Probe(ctx context.Context, cfg Config, job obs.Job, log *slog.Logger) *obs.
 			res.PVE = p
 		})
 	}
+	if cfg.SSDP && len(ips) > 0 {
+		wg.Go(func() {
+			all, err := ssdpDiscover(ctx, cfg, lanIface(cfg, res.Self))
+			errs.add("ssdp", err)
+			for _, d := range all {
+				if slices.Contains(ips, d.IP) {
+					res.SSDP = append(res.SSDP, d)
+				}
+			}
+		})
+	}
 	wg.Wait()
 
 	res.DNS = reverseDNS(ctx, ips)

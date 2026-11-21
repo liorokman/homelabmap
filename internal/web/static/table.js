@@ -50,10 +50,11 @@ export function createTable(ctx) {
         return [
           col('Name', (n) => n.label, { html: (n) => `<a data-node="${esc(n.id)}">${esc(n.label)}</a>${n.new ? ' <span class="tag new">new</span>' : ''}` }),
           col('Type', (n) => roleName(n.role)),
-          col('Power', (n) => powerLine(n), { cls: (n) => (n.power === 'off' ? 'off' : '') }),
+          col('Power', (n) => powerLine(n), { cls: (n) => (n.power === 'off' ? 'off' : ''), sort: (n) => (n.absent ? 2 : n.power === 'off' ? 1 : 0) }),
           col('IPv4', (n) => list(n.ips), { html: (n) => listHTML(n.ips, 'mono'), sort: (n) => ipKey(n.ips?.[0]) }),
           col('IPv6', (n) => list(n.ipv6), { html: (n) => listHTML(n.ipv6, 'mono'), sort: (n) => n.ipv6?.[0] || '~' }),
           col('MAC', (n) => list(n.macs), { html: (n) => listHTML(n.macs, 'mono') }),
+          col('Earlier MACs', (n) => list(n.otherMacs), { html: (n) => listHTML(n.otherMacs, 'mono') }),
           col('Vendor', (n) => n.vendor || '', { wrap: true }),
           col('OS', (n) => n.os || '', { wrap: true }),
           col('OS from', (n) => n.osSource || ''),

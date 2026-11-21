@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -166,10 +168,17 @@ func (h *harness) get(t *testing.T, path string) *http.Response {
 func (h *harness) login(t *testing.T) *http.Response {
 	t.Helper()
 	resp := h.get(t, "/")
-	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), "/auth/login") {
-		t.Fatalf("unauthenticated / should redirect to login, got %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), "/signin") {
+		t.Fatalf("unauthenticated / should go to the landing page, got %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
+	// The landing page offers the sign-in link; follow it like a person would.
 	resp = h.get(t, resp.Header.Get("Location"))
+	body, _ := io.ReadAll(resp.Body)
+	m := regexp.MustCompile(`href="(/auth/login\?[^"]+)"`).FindSubmatch(body)
+	if resp.StatusCode != http.StatusOK || m == nil {
+		t.Fatalf("landing page: %d %s", resp.StatusCode, body)
+	}
+	resp = h.get(t, html.UnescapeString(string(m[1])))
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("login: %d", resp.StatusCode)
 	}
@@ -570,5 +579,58 @@ func TestSightingsLimits(t *testing.T) {
 	}
 	if r := h.agentDo(t, "POST", "/agent/v1/sightings", "nope", strings.NewReader("{}"), false); r.StatusCode != http.StatusUnauthorized {
 		t.Errorf("bad token: %d", r.StatusCode)
+	}
+}
+
+func TestLandingPageAndLogout(t *testing.T) {
+	h := newHarness(t, func(c *Config) { c.OIDCProviderName = "ExampleIdP" })
+	resp := h.get(t, "/signin?return=%2F%23table%2Fheard")
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "Sign in with ExampleIdP") ||
+		!strings.Contains(string(body), `href="/auth/login?return=%2F%23table%2Fheard"`) {
+		t.Fatalf("landing page: %d %s", resp.StatusCode, body)
+	}
+	// An open redirect can't be smuggled through the landing page.
+	body, _ = io.ReadAll(h.get(t, "/signin?return=https%3A%2F%2Fevil.example%2F").Body)
+	if strings.Contains(string(body), "evil.example") {
+		t.Error("foreign return URL kept")
+	}
+	if b, _ := io.ReadAll(h.get(t, "/signin?signed-out=1").Body); !strings.Contains(string(b), "signed out") {
+		t.Error("signed-out note missing")
+	}
+
+	h.login(t)
+	// Signed in, the landing page moves on.
+	if resp := h.get(t, "/signin?return=%2F"); resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/" {
+		t.Errorf("signed-in landing: %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	// The browser's logout form post: Origin may be "null", Sec-Fetch-Site decides.
+	logout := func(hdr map[string]string) *http.Response {
+		req, _ := http.NewRequest("POST", h.app.URL+"/auth/logout", nil)
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := h.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+	if r := logout(map[string]string{"Origin": "null", "Sec-Fetch-Site": "cross-site"}); r.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site logout: %d", r.StatusCode)
+	}
+	r := logout(map[string]string{"Origin": "null", "Sec-Fetch-Site": "same-origin"})
+	if r.StatusCode != http.StatusSeeOther {
+		t.Fatalf("same-origin logout: %d", r.StatusCode)
+	}
+	loc, _ := url.Parse(r.Header.Get("Location"))
+	if !strings.HasSuffix(loc.Path, "/logout") || loc.Query().Get("client_id") != "homelabmap" ||
+		!strings.HasSuffix(loc.Query().Get("post_logout_redirect_uri"), "/signin?signed-out=1") {
+		t.Errorf("logout redirect: %s", loc)
+	}
+	if resp := h.get(t, "/api/status"); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("session survived logout: %d", resp.StatusCode)
 	}
 }

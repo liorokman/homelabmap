@@ -27,6 +27,8 @@ type Config struct {
 	UniFiAPIKey      string
 	UniFiSite        string
 	UniFiInsecureTLS bool
+	// UniFiHistoryHours is how far back to list clients not connected now.
+	UniFiHistoryHours int
 
 	PVEURL         string
 	PVETokenID     string // user@realm!tokenid
@@ -43,6 +45,9 @@ type Config struct {
 	// through the homelabmap-listen helper.
 	Passive    bool
 	ListenPath string
+
+	// SSDP enables the UPnP search (M-SEARCH) during scans.
+	SSDP bool
 }
 
 type SNMPConfig struct {
@@ -94,6 +99,12 @@ func LoadConfig() (Config, error) {
 		errs = append(errs, err)
 	}
 	if c.NmapPrivileged, err = envBool("HOMELABMAP_NMAP_PRIVILEGED", false); err != nil {
+		errs = append(errs, err)
+	}
+	if c.SSDP, err = envBool("HOMELABMAP_SSDP", true); err != nil {
+		errs = append(errs, err)
+	}
+	if c.UniFiHistoryHours, err = envInt("HOMELABMAP_UNIFI_HISTORY_HOURS", 720); err != nil {
 		errs = append(errs, err)
 	}
 	if c.Passive, err = envBool("HOMELABMAP_PASSIVE", true); err != nil {

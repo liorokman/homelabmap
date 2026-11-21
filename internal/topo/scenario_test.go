@@ -311,8 +311,10 @@ func TestScenarioInfrastructure(t *testing.T) {
 			if _, ok := v.byMAC[macTransit]; ok {
 				t.Error("transit-only MAC should be hidden")
 			}
-			if _, ok := v.byMAC[macHVLACP]; ok {
-				t.Error("hv1's LACP MAC should not become a device")
+			// hv1's bond MAC is hv1's own MAC with the local bit set: it is
+			// folded into hv1 rather than becoming a device of its own.
+			if n, ok := v.byMAC[macHVLACP]; ok && n.Label != "hv1" {
+				t.Errorf("hv1's LACP MAC became device %q", n.Label)
 			}
 			if ips := v.node(macAcc).IPs; !slices.Equal(ips, []string{ipAcc}) {
 				t.Errorf("USW-24 IPs %v: foreign fallback address leaked", ips)

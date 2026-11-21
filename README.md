@@ -12,7 +12,7 @@ Two containers on the Cosmos host, built from one Go module:
 
 | | `homelabmap-scanner` | `homelabmap-web` |
 |---|---|---|
-| Job | Observe: nmap sweep + OS detection, SNMP, UniFi API, PVE API, reverse DNS, passive ARP/NDP listening | Everything else: schedule, store, infer topology, UI, OIDC login |
+| Job | Observe: nmap sweep + OS detection, SNMP, UniFi API, PVE API, SSDP/UPnP, reverse DNS, passive ARP/NDP listening | Everything else: schedule, store, infer topology, UI, OIDC login |
 | Network | **host** (needs the LAN segment for ARP) | Cosmos bridge network, behind the Cosmos route |
 | Listens | **nothing** | `:8080` UI (route target), `:8081` agent API (published on host **127.0.0.1:8097** only) |
 | Privileges | non-root; `cap_drop ALL`, `cap_add NET_RAW, NET_ADMIN`; only `nmap` and `homelabmap-listen` (NET_RAW only) carry file caps | non-root, `cap_drop ALL` |
@@ -46,9 +46,23 @@ internal/web         HTTP, OIDC+PKCE, scheduler, agent API, embedded UI
   (USW-Lite-8, APs) are *inferred* to be behind it (dashed line). MACs on a
   hypervisor's port are its guests; PVE data makes that exact.
 * **OS** is the strongest of: PVE guest type / UniFi device (95–90) > SNMP
-  `sysDescr` (85) > nmap fingerprint (75/65/45 by accuracy) > hostname rules
-  (50) > MAC vendor (30) > randomized Wi-Fi MAC (20). nmap runs only for hosts
-  whose OS is still a guess, at most every 7 days per MAC.
+  `sysDescr` (85) > SSDP/UPnP self-description for appliances (80: TVs,
+  consoles, receivers, NAS) > nmap fingerprint (75/65/45 by accuracy) >
+  hostname rules (50) > MAC vendor (30) > randomized Wi-Fi MAC (20). nmap
+  runs only for hosts whose OS is still a guess, at most every 7 days per MAC.
+* **Names**, best first: UniFi device name, the alias set in UniFi, PVE/SNMP
+  names, the SSDP friendly name, DHCP hostname (UniFi), LLDP/CDP, reverse DNS.
+* **Secondary MACs**: a MAC seen only in tables (never answering itself) that
+  matches an answering device's burned-in MAC in the first five bytes, after
+  clearing the local bit, belongs to it (bond members, bridge/bond-derived
+  addresses: hv1's `da:3b:42:…`).
+* **Rotating private MACs**: devices whose MACs are all private and that share
+  a specific name are one device; earlier MACs are listed on it. Generic
+  names ("iPhone") never link, nor do two such devices present at once.
+* **Absent devices**: devices from the previous map that a scan didn't see,
+  and named clients from the UniFi controller's 30-day history, stay on the
+  map greyed out as "not seen since …" (VMs excepted: PVE lists those), until
+  unseen for `HOMELABMAP_FORGET_AFTER` (30 days).
 
 ## New devices between scans
 
@@ -92,7 +106,14 @@ if switches flood them (MLD snooping can hide some NDP).
 `deploy/cosmos-compose.rendered.json` (also gitignored). All variables are
 `HOMELABMAP_*`; see `internal/scanner/config.go` and `internal/web/config.go`.
 Passive listening is on by default (`HOMELABMAP_PASSIVE=false` turns it off);
-`HOMELABMAP_PROBE_MAX_PER_HOUR=0` keeps listening but never probes.
+`HOMELABMAP_PROBE_MAX_PER_HOUR=0` keeps listening but never probes. SSDP search
+is on by default (`HOMELABMAP_SSDP=false`); description documents are fetched
+only from the address that answered.
+
+Sign-in: anonymous visitors get a landing page with a "Sign in with
+`HOMELABMAP_OIDC_PROVIDER_NAME`" button. Sign-out ends the IdP session too and
+asks it to return to `https://<host>/signin?signed-out=1`; add that URL to the
+identity provider's redirect URIs for the round trip to complete.
 
 ## Development
 

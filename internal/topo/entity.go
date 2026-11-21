@@ -2,6 +2,7 @@ package topo
 
 import (
 	"maps"
+	"net"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -26,6 +27,7 @@ type entity struct {
 	guest     *obs.PVEGuest
 	guestNode string
 	sweep     []obs.SweepHost
+	ssdp      *obs.SSDPDevice
 	lldpRefs  []*obs.LLDPNeighbor
 	cdpRefs   []*obs.CDPNeighbor
 	self      bool
@@ -86,10 +88,20 @@ func (e *entity) power() (state, detail string) {
 			return PowerOff, "disconnected"
 		}
 		return PowerOn, ""
-	case e.self || len(e.sweep) > 0 || len(e.snmp) > 0 || e.ucli != nil:
+	case e.self || len(e.sweep) > 0 || len(e.snmp) > 0 || e.ssdp != nil || (e.ucli != nil && !e.ucli.Offline):
 		return PowerOn, ""
+	case e.ucli != nil && e.ucli.Offline && len(e.ips) == 0:
+		// Only the controller's history knows it: it isn't here now. (An
+		// ARP entry would mean it was around very recently: unknown.)
+		return PowerOff, NotSeen
 	}
 	return "", ""
+}
+
+// absent reports a device known only from history.
+func (e *entity) absent() bool {
+	_, detail := e.power()
+	return detail == NotSeen
 }
 
 func (e *entity) addSource(s string) { e.sources[s] = true }
@@ -231,7 +243,9 @@ func (b *builder) buildIPMAC() {
 		set(h.IP, h.MAC, 3)
 	}
 	for _, c := range b.uclis {
-		set(c.IP, c.MAC, 2)
+		if !c.Offline {
+			set(c.IP, c.MAC, 2)
+		}
 	}
 	for _, d := range b.udevs {
 		set(d.IP, d.MAC, 2)
@@ -393,10 +407,29 @@ func (b *builder) buildEntities() {
 	}
 	for i := range b.uclis {
 		c := &b.uclis[i]
+		if c.Offline && c.Name == "" && c.Hostname == "" && b.known[c.MAC].Alias == "" {
+			continue // an unnamed device that isn't here: noise, not information
+		}
 		add(record{keys: []string{macKey(c.MAC)}, apply: func(e *entity) {
 			e.ucli = c
+			if c.Offline {
+				e.addSource("unifi-history")
+				return
+			}
 			e.addIP(c.IP)
 			e.addSource("unifi")
+		}})
+	}
+	for i := range b.res.SSDP {
+		d := &b.res.SSDP[i]
+		k := ipKey(d.IP)
+		if k == "" {
+			k = "ip:" + d.IP
+		}
+		add(record{keys: []string{k}, apply: func(e *entity) {
+			e.ssdp = d
+			e.addIP(d.IP)
+			e.addSource("ssdp")
 		}})
 	}
 
@@ -434,6 +467,15 @@ func (b *builder) buildEntities() {
 		}
 		uf.find(r.keys[0])
 	}
+
+	// MACs seen only in other devices' tables (MAC tables, controller
+	// lists), never answering themselves, can be a host's secondary
+	// addresses: bond members (whose MAC a bond hides) and addresses that
+	// bonds and bridges derive from the NIC by setting the local bit. Such a
+	// MAC joins the one answering device with a burned-in MAC that matches
+	// it in the first five bytes (after clearing the local bit). Devices
+	// that answered themselves are never folded into another.
+	b.foldSecondaryMACs(uf)
 
 	// Name-only neighbours (no MAC, no address) join the one device that
 	// answered SNMP or UniFi under that name, if exactly one did.
@@ -511,4 +553,71 @@ func (b *builder) entityByMAC(mac string) *entity {
 		return nil
 	}
 	return b.byKey[macKey(mac)]
+}
+
+// globalVariant clears the locally-administered bit: da:3b:… -> d8:3b:….
+func globalVariant(mac string) string {
+	hw, err := net.ParseMAC(mac)
+	if err != nil || len(hw) != 6 {
+		return ""
+	}
+	hw[0] &^= 0x02
+	return hw.String()
+}
+
+// foldSecondaryMACs implements the rule described in buildEntities.
+func (b *builder) foldSecondaryMACs(uf unionFind) {
+	strong := map[string]bool{}
+	for _, h := range b.res.Sweep {
+		strong[macKey(h.MAC)] = true
+	}
+	for _, i := range b.res.Self.Interfaces {
+		strong[macKey(i.MAC)] = true
+	}
+	for _, d := range b.res.SNMP {
+		strong[macKey(d.BridgeMAC)] = true
+		for _, itf := range d.Interfaces {
+			strong[macKey(itf.MAC)] = true
+		}
+	}
+	delete(strong, macKey(""))
+	strongRoot := map[string]bool{}
+	byPrefix := map[string]map[string]bool{}
+	for k := range strong {
+		if _, ok := uf[k]; !ok {
+			continue
+		}
+		root := uf.find(k)
+		strongRoot[root] = true
+		m := strings.TrimPrefix(k, "m:")
+		if len(m) == 17 && !obs.IsLocallyAdministered(m) {
+			if byPrefix[m[:14]] == nil {
+				byPrefix[m[:14]] = map[string]bool{}
+			}
+			byPrefix[m[:14]][root] = true
+		}
+	}
+	// Sets with an identity of their own (a PVE guest, an SNMP agent, a
+	// UniFi device, ...) are devices in their own right, not addresses.
+	anchored := map[string]bool{}
+	for k := range uf {
+		if !strings.HasPrefix(k, "m:") {
+			anchored[uf.find(k)] = true
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(uf)) {
+		m, ok := strings.CutPrefix(k, "m:")
+		if !ok || strongRoot[uf.find(k)] || anchored[uf.find(k)] {
+			continue
+		}
+		g := globalVariant(m)
+		if g == "" {
+			continue
+		}
+		if roots := byPrefix[g[:14]]; len(roots) == 1 {
+			for root := range roots {
+				uf.union(root, k)
+			}
+		}
+	}
 }

@@ -3,6 +3,7 @@ package topo
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/liorokman/homelabmap/internal/obs"
 )
@@ -23,6 +24,96 @@ type uniClient struct {
 	SwMAC                        string
 	SwPort                       int
 	APMAC, UplinkID, ESSID       string
+	FirstSeen, LastSeen          time.Time
+	// Offline clients come from the controller's history: seen recently,
+	// not connected now. Their last IP may belong to someone else by now.
+	Offline bool
+}
+
+// uniKnown is what the controller remembers about a client it has ever
+// seen: the alias set in UniFi, and when it was first and last seen.
+type uniKnown struct {
+	Alias, Hostname     string
+	FirstSeen, LastSeen time.Time
+}
+
+func unixTime(n int64) time.Time {
+	if n <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(n, 0).UTC()
+}
+
+// parseUniFiKnown indexes the controller's remembered clients by MAC.
+func parseUniFiKnown(u *obs.UniFi) map[string]uniKnown {
+	out := map[string]uniKnown{}
+	if u == nil {
+		return out
+	}
+	for _, raw := range u.Known {
+		var r struct {
+			MAC       string `json:"mac"`
+			Name      string `json:"name"`
+			Hostname  string `json:"hostname"`
+			FirstSeen int64  `json:"first_seen"`
+			LastSeen  int64  `json:"last_seen"`
+		}
+		if json.Unmarshal(raw, &r) != nil {
+			continue
+		}
+		if m := obs.NormMAC(r.MAC); m != "" {
+			out[m] = uniKnown{Alias: strings.TrimSpace(r.Name), Hostname: strings.TrimSpace(r.Hostname),
+				FirstSeen: unixTime(r.FirstSeen), LastSeen: unixTime(r.LastSeen)}
+		}
+	}
+	return out
+}
+
+// parseUniFiHistory reads recently seen, currently disconnected clients
+// (v2 API), skipping any that are connected now.
+func parseUniFiHistory(u *obs.UniFi, connected map[string]bool) []uniClient {
+	if u == nil {
+		return nil
+	}
+	var out []uniClient
+	for _, raw := range u.History {
+		var r struct {
+			MAC           string `json:"mac"`
+			Name          string `json:"name"`
+			Hostname      string `json:"hostname"`
+			OUI           string `json:"oui"`
+			Type          string `json:"type"`
+			IsWired       *bool  `json:"is_wired"`
+			LastUplinkMAC string `json:"last_uplink_mac"`
+			SwPort        int    `json:"sw_port"`
+			FirstSeen     int64  `json:"first_seen"`
+			LastSeen      int64  `json:"last_seen"`
+		}
+		if json.Unmarshal(raw, &r) != nil {
+			continue
+		}
+		m := obs.NormMAC(r.MAC)
+		if m == "" || connected[m] {
+			continue
+		}
+		c := uniClient{MAC: m, Name: strings.TrimSpace(r.Name), Hostname: strings.TrimSpace(r.Hostname), OUI: r.OUI,
+			FirstSeen: unixTime(r.FirstSeen), LastSeen: unixTime(r.LastSeen), Offline: true}
+		switch {
+		case r.IsWired != nil:
+			c.Wired, c.WiredKnown = *r.IsWired, true
+		case r.Type == "WIRED":
+			c.Wired, c.WiredKnown = true, true
+		case r.Type == "WIRELESS":
+			c.Wired, c.WiredKnown = false, true
+		}
+		if c.Wired {
+			c.SwMAC, c.SwPort = obs.NormMAC(r.LastUplinkMAC), r.SwPort
+		} else {
+			c.APMAC = obs.NormMAC(r.LastUplinkMAC)
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 type rawUniDev struct {
@@ -57,16 +148,18 @@ type rawUniDev struct {
 
 type rawUniClient struct {
 	// classic
-	MAC      string `json:"mac"`
-	IP       string `json:"ip"`
-	Name     string `json:"name"`
-	Hostname string `json:"hostname"`
-	OUI      string `json:"oui"`
-	IsWired  *bool  `json:"is_wired"`
-	SwMAC    string `json:"sw_mac"`
-	SwPort   int    `json:"sw_port"`
-	APMAC    string `json:"ap_mac"`
-	ESSID    string `json:"essid"`
+	MAC       string `json:"mac"`
+	IP        string `json:"ip"`
+	Name      string `json:"name"`
+	Hostname  string `json:"hostname"`
+	OUI       string `json:"oui"`
+	IsWired   *bool  `json:"is_wired"`
+	SwMAC     string `json:"sw_mac"`
+	SwPort    int    `json:"sw_port"`
+	APMAC     string `json:"ap_mac"`
+	ESSID     string `json:"essid"`
+	FirstSeen int64  `json:"first_seen"`
+	LastSeen  int64  `json:"last_seen"`
 	// integration
 	Type           string `json:"type"`
 	MACAddress     string `json:"macAddress"`
@@ -129,6 +222,9 @@ func parseUniFi(u *obs.UniFi) ([]uniDev, []uniClient) {
 			APMAC:    obs.NormMAC(r.APMAC),
 			UplinkID: r.UplinkDeviceID,
 			ESSID:    r.ESSID,
+
+			FirstSeen: unixTime(r.FirstSeen),
+			LastSeen:  unixTime(r.LastSeen),
 		}
 		switch {
 		case r.IsWired != nil:

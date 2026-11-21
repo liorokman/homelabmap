@@ -61,6 +61,7 @@ type Result struct {
 	UniFi   *UniFi            `json:"unifi,omitempty"`
 	PVE     *PVE              `json:"pve,omitempty"`
 	OSScans []OSScan          `json:"osScans,omitempty"`
+	SSDP    []SSDPDevice      `json:"ssdp,omitempty"`
 	DNS     map[string]string `json:"dns,omitempty"` // IP -> PTR name
 	// Errors are non-fatal collector problems, shown in the UI.
 	Errors []string `json:"errors,omitempty"`
@@ -169,6 +170,26 @@ type UniFi struct {
 	Flavor  string            `json:"flavor"`
 	Devices []json.RawMessage `json:"devices"`
 	Clients []json.RawMessage `json:"clients"`
+	// Known is every client the controller remembers, with the aliases
+	// set in UniFi (classic API rest/user).
+	Known []json.RawMessage `json:"known,omitempty"`
+	// History is clients seen recently but not connected now (v2 API).
+	History []json.RawMessage `json:"history,omitempty"`
+}
+
+// SSDPDevice is a UPnP device that answered an SSDP search, with its
+// description document if it could be fetched.
+type SSDPDevice struct {
+	IP               string   `json:"ip"`
+	Server           string   `json:"server,omitempty"`
+	Location         string   `json:"location,omitempty"`
+	Types            []string `json:"types,omitempty"` // ST values answered
+	DeviceType       string   `json:"deviceType,omitempty"`
+	FriendlyName     string   `json:"friendlyName,omitempty"`
+	Manufacturer     string   `json:"manufacturer,omitempty"`
+	ModelName        string   `json:"modelName,omitempty"`
+	ModelNumber      string   `json:"modelNumber,omitempty"`
+	ModelDescription string   `json:"modelDescription,omitempty"`
 }
 
 type PVE struct {

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -249,10 +250,18 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: s.sessionCookieName(), Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: s.cookieSecure(), SameSite: http.SameSiteLaxMode})
-	dest := "/logged-out"
+	dest := "/signin?signed-out=1"
 	if !s.cfg.InsecureNoAuth {
 		if _, err := s.auth.init(r.Context()); err == nil && s.auth.endSess != "" {
-			dest = s.auth.endSess
+			// RP-initiated logout: the IdP ends its session too, then sends
+			// the browser back to our landing page if it allows that URI.
+			back := s.cfg.PublicURL.JoinPath("/signin").String() + "?signed-out=1"
+			q := url.Values{"client_id": {s.cfg.OIDCClientID}, "post_logout_redirect_uri": {back}}
+			sep := "?"
+			if strings.Contains(s.auth.endSess, "?") {
+				sep = "&"
+			}
+			dest = s.auth.endSess + sep + q.Encode()
 		}
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)
@@ -266,32 +275,62 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, &User{Subject: "dev", Name: devUserName})))
 			return
 		}
-		if c, err := r.Cookie(s.sessionCookieName()); err == nil {
-			sess, err := s.store.GetSession(r.Context(), hashToken(c.Value), s.now())
-			if err == nil {
-				u := &User{Subject: sess.Subject, Name: sess.Name, Email: sess.Email}
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, u)))
-				return
-			}
-			if !errors.Is(err, store.ErrNotFound) {
-				s.serverError(w, "loading session", err)
-				return
-			}
+		u, ok, err := s.sessionUser(r)
+		if err != nil {
+			s.serverError(w, "loading session", err)
+			return
+		}
+		if ok {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, u)))
+			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
 			return
 		}
-		http.Redirect(w, r, "/auth/login?return="+urlQueryEscape(r.URL.RequestURI()), http.StatusFound)
+		// Pages: the landing page, which offers the sign-in.
+		http.Redirect(w, r, "/signin?return="+urlQueryEscape(r.URL.RequestURI()), http.StatusFound)
 	})
 }
 
-// sameOrigin rejects cross-site state-changing requests. Browsers always
-// send Origin on POST; a missing header means a non-browser client.
+// sessionUser returns the signed-in user, if the request has a session.
+func (s *Server) sessionUser(r *http.Request) (*User, bool, error) {
+	c, err := r.Cookie(s.sessionCookieName())
+	if err != nil {
+		return nil, false, nil
+	}
+	sess, err := s.store.GetSession(r.Context(), hashToken(c.Value), s.now())
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &User{Subject: sess.Subject, Name: sess.Name, Email: sess.Email}, true, nil
+}
+
+func (s *Server) currentUser(r *http.Request) (*User, bool) {
+	if s.cfg.InsecureNoAuth {
+		return &User{Subject: "dev", Name: devUserName}, true
+	}
+	u, ok, err := s.sessionUser(r)
+	return u, ok && err == nil
+}
+
+// sameOrigin rejects cross-site state-changing requests.
+//
+// Sec-Fetch-Site is set by the browser and can't be forged by a page; when
+// present it decides. Origin is the fallback for older browsers, but it
+// can be "null" on same-origin form posts (depending on the referrer
+// policy), so it is not used when Sec-Fetch-Site is available. A request
+// with neither header is not from a browser.
 func (s *Server) sameOrigin(r *http.Request) bool {
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site == "same-origin"
+	}
 	o := r.Header.Get("Origin")
 	if o == "" {
-		return r.Header.Get("Sec-Fetch-Site") == "" || r.Header.Get("Sec-Fetch-Site") == "same-origin"
+		return true
 	}
 	want := s.cfg.PublicURL.Scheme + "://" + s.cfg.PublicURL.Host
 	if s.cfg.InsecureNoAuth {

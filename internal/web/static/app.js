@@ -40,7 +40,7 @@ function dateTime(t) {
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'same-origin', ...opts });
   if (res.status === 401) {
-    location.href = '/auth/login?return=' + encodeURIComponent(location.pathname);
+    location.href = '/signin?return=' + encodeURIComponent(location.pathname + location.hash);
     throw new Error('login required');
   }
   if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
@@ -157,6 +157,8 @@ function buildStyle() {
     { selector: 'node.container', style: { shape: 'hexagon', width: 30, height: 27 } },
     // Powered off: grey (see nodeColors), see-through, muted label.
     { selector: 'node.off', style: { opacity: 0.55, color: c('--muted'), 'font-style': 'italic' } },
+    // Absent (not seen now, shown from history): fainter still, dotted.
+    { selector: 'node.absent', style: { opacity: 0.4, 'border-style': 'dotted', 'border-width': 2 } },
     { selector: 'node.unknownloc', style: { opacity: 0.8 } },
     {
       selector: 'node.new',
@@ -190,6 +192,7 @@ function buildStyle() {
       },
     },
     { selector: 'edge.off', style: { opacity: 0.35 } },
+    { selector: 'edge.absent', style: { opacity: 0.25, 'line-style': 'dotted' } },
     { selector: '.faded', style: { opacity: 0.12 } },
     { selector: 'node.match', style: { 'border-width': 4, 'border-color': c('--accent') } },
     { selector: 'node:selected', style: { 'overlay-color': c('--accent'), 'overlay-opacity': 0.18, 'overlay-padding': 7 } },
@@ -206,6 +209,7 @@ function toElements(graph) {
     if (n.connection === 'unknown') cls.push('unknownloc');
     if (n.new) cls.push('new');
     if (n.power === 'off') cls.push('off');
+    if (n.absent) cls.push('absent');
     if (n.location === 'gateway') cls.push('gateway');
     // Cytoscape reads data.parent as a compound parent and would draw the
     // hypervisor as a box around its guests; keep it under another name.
@@ -216,6 +220,7 @@ function toElements(graph) {
   for (const e of graph.edges || []) {
     const cls = [e.kind];
     if (off.has(e.source) || off.has(e.target)) cls.push('off');
+    if (e.absent) cls.push('absent');
     els.push({ group: 'edges', data: { ...e }, classes: cls.join(' ') });
   }
   return els;
@@ -444,7 +449,7 @@ function isVisible(d) {
 // matchesQuery is the search box's test (q already lower-cased).
 function matchesQuery(d, q) {
   if (!q) return true;
-  const hay = [d.label, d.os, d.vendor, d.location, d.model, ...(d.ips || []), ...(d.ipv6 || []), ...(d.macs || []), ...(d.dns || [])]
+  const hay = [d.label, d.os, d.vendor, d.location, d.model, ...(d.ips || []), ...(d.ipv6 || []), ...(d.macs || []), ...(d.otherMacs || []), ...(d.dns || [])]
     .join(' ').toLowerCase();
   return hay.includes(q);
 }
@@ -486,6 +491,7 @@ function nodeHeader(d, tag = 'h3') {
 }
 
 function powerLine(d) {
+  if (d.absent) return d.lastSeen ? `Not seen since ${ago(d.lastSeen)}` : 'Not seen recently';
   if (!d.power) return '';
   const word = d.power === 'on' ? 'On' : 'Off';
   return d.powerState && d.powerState !== 'online' ? `${word} (${d.powerState})` : word;
@@ -503,6 +509,7 @@ function showTooltip(el) {
     tip.innerHTML = nodeHeader(d) + '<dl class="kv">' +
       row('IP', d.ips?.length ? d.ips : '—', 'mono') +
       row('MAC', d.macs?.length ? d.macs[0] + (d.macs.length > 1 ? ` (+${d.macs.length - 1})` : '') : '—', 'mono') +
+      (d.otherMacs?.length ? row('Earlier MACs', `${d.otherMacs.length} private address${d.otherMacs.length > 1 ? 'es' : ''}`) : '') +
       row('DNS', d.dns?.length ? d.dns : '—') +
       row('OS', osLine(d)) +
       row('Power', powerLine(d), d.power === 'off' ? 'off' : '') +
@@ -549,6 +556,7 @@ function showDetails(node) {
     row('IP', d.ips, 'mono') +
     row('IPv6', d.ipv6, 'mono') +
     row('MAC', d.macs, 'mono') +
+    row('Earlier private MACs', d.otherMacs, 'mono') +
     row('DNS', d.dns) +
     row('OS', osLine(d)) +
     (d.osSource ? row('OS from', d.osSource) : '') +
@@ -581,15 +589,16 @@ function renderLegend() {
     return `<div class="item"><span class="sw edge" style="border-color:${c}"><img alt="" src="${iconURI(icon, c)}"></span>${label}</div>`;
   };
   const shape = (kind, label) => {
-    const c = cssVar(kind === 'off' ? '--off' : '--os-linux');
+    const grey = kind === 'off' || kind === 'absent';
+    const c = cssVar(grey ? '--off' : '--os-linux');
     const body = kind === 'container'
       ? '<polygon points="12,2 21,7 21,17 12,22 3,17 3,7"/>'
       : kind === 'vm'
         ? '<rect x="3" y="3" width="18" height="18" rx="5"/>'
         : '<circle cx="12" cy="12" r="9"/>';
-    const dash = kind === 'off' ? '' : ' stroke-dasharray="3 2"';
+    const dash = kind === 'off' ? '' : kind === 'absent' ? ' stroke-dasharray="1 2.5"' : ' stroke-dasharray="3 2"';
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${cssVar('--node-surface')}" stroke="${c}" stroke-width="2"${dash}>${body}</svg>`;
-    return `<div class="item"><span class="sw shape${kind === 'off' ? ' off' : ''}"><img alt="" src="data:image/svg+xml;utf8,${encodeURIComponent(svg)}"></span>${label}</div>`;
+    return `<div class="item"><span class="sw shape${grey ? ' ' + kind : ''}"><img alt="" src="data:image/svg+xml;utf8,${encodeURIComponent(svg)}"></span>${label}</div>`;
   };
   const line = (cls, label) => `<div class="item full"><span class="line ${cls}"></span>${label}</div>`;
   $('#legend').innerHTML =
@@ -597,7 +606,7 @@ function renderLegend() {
     os('proxmox', 'Proxmox') + os('linux', 'Linux') + os('windows', 'Windows') + os('apple', 'Apple') +
     os('android', 'Android') + os('printer', 'Printer') + os('media', 'TV / media') + os('iot', 'IoT') +
     os('phone', 'Phone (private MAC)') + os('unknown', 'Unknown') +
-    shape('vm', 'VM') + shape('container', 'Container') + shape('off', 'Powered off') +
+    shape('vm', 'VM') + shape('container', 'Container') + shape('off', 'Powered off') + shape('absent', 'Not seen now') +
     line('infra', 'Cable between network devices') + line('', 'Cable to a device') + line('wireless', 'Wi-Fi') +
     line('virtual', 'VM / container on host') + line('guess', 'Inferred or unknown location');
 }

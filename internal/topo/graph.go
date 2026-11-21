@@ -11,7 +11,7 @@ import (
 )
 
 // Version changes whenever inference changes, so stored graphs get rebuilt.
-const Version = 3
+const Version = 4
 
 // Roles. Infra roles are drawn as network gear.
 const (
@@ -41,6 +41,9 @@ const (
 const (
 	PowerOn  = "on"
 	PowerOff = "off"
+	// NotSeen is the power detail of devices that are absent: known from
+	// history (earlier scans, the UniFi controller) but not seen now.
+	NotSeen = "not seen"
 )
 
 type Graph struct {
@@ -54,16 +57,18 @@ type Graph struct {
 }
 
 type Node struct {
-	ID         string    `json:"id"`
-	Label      string    `json:"label"`
-	Role       string    `json:"role"`
-	Infra      bool      `json:"infra"`
-	Icon       string    `json:"icon"`
-	OS         string    `json:"os,omitempty"`
-	OSSource   string    `json:"osSource,omitempty"`
-	IPs        []string  `json:"ips,omitempty"`
-	IPv6       []string  `json:"ipv6,omitempty"` // heard via neighbour discovery
-	MACs       []string  `json:"macs,omitempty"`
+	ID       string   `json:"id"`
+	Label    string   `json:"label"`
+	Role     string   `json:"role"`
+	Infra    bool     `json:"infra"`
+	Icon     string   `json:"icon"`
+	OS       string   `json:"os,omitempty"`
+	OSSource string   `json:"osSource,omitempty"`
+	IPs      []string `json:"ips,omitempty"`
+	IPv6     []string `json:"ipv6,omitempty"` // heard via neighbour discovery
+	MACs     []string `json:"macs,omitempty"`
+	// OtherMACs are earlier private (randomised) MACs of the same device.
+	OtherMACs  []string  `json:"otherMacs,omitempty"`
 	DNS        []string  `json:"dns,omitempty"`
 	Vendor     string    `json:"vendor,omitempty"`
 	Model      string    `json:"model,omitempty"`
@@ -71,6 +76,7 @@ type Node struct {
 	Connection string    `json:"connection,omitempty"`
 	Parent     string    `json:"parent,omitempty"`
 	Power      string    `json:"power,omitempty"`      // PowerOn, PowerOff or unknown
+	Absent     bool      `json:"absent,omitempty"`     // not seen now; shown from history
 	PowerState string    `json:"powerState,omitempty"` // as reported, e.g. "stopped"
 	OpenPorts  []string  `json:"openPorts,omitempty"`
 	Sources    []string  `json:"sources"`
@@ -88,6 +94,7 @@ type Edge struct {
 	SourcePort string   `json:"sourcePort,omitempty"`
 	TargetPort string   `json:"targetPort,omitempty"`
 	Sources    []string `json:"sources"`
+	Absent     bool     `json:"absent,omitempty"` // to or from an absent device
 }
 
 // History is what the store remembers across scans.

@@ -257,6 +257,9 @@ func (b *builder) identifyOS(e *entity) osGuess {
 			g = better(g, nmapOS(s))
 		}
 	}
+	if e.ssdp != nil {
+		g = better(g, ssdpOS(e.ssdp))
+	}
 	for _, n := range b.namesOf(e) {
 		for _, r := range hostnameRules {
 			if r.re.MatchString(n) {
@@ -284,4 +287,34 @@ func (b *builder) identifyOS(e *entity) osGuess {
 		}
 	}
 	return g
+}
+
+// ssdpOS classifies UPnP devices. Appliances describe themselves well
+// (maker, model, device type), better than nmap's generic "Linux" for the
+// same box, so these score above nmap but below SNMP and the controllers.
+func ssdpOS(d *obs.SSDPDevice) osGuess {
+	const score = 80
+	hay := strings.ToLower(strings.Join([]string{d.FriendlyName, d.Manufacturer, d.ModelName, d.ModelDescription}, " "))
+	server := strings.ToLower(d.Server)
+	types := strings.ToLower(d.DeviceType + " " + strings.Join(d.Types, " "))
+	model := ssdpModel(d)
+	switch {
+	case strings.Contains(hay, "xbox"), strings.Contains(hay, "playstation"), strings.Contains(hay, "nintendo"):
+		return osGuess{name: "Game console (" + model + ")", icon: IconGaming, source: "ssdp", score: score}
+	case strings.Contains(hay, "synology"), strings.Contains(hay, "qnap"), strings.Contains(hay, "diskstation"), strings.Contains(hay, "truenas"):
+		return osGuess{name: "NAS (" + model + ")", icon: IconNAS, source: "ssdp", score: score}
+	case strings.Contains(types, "printer"):
+		return osGuess{name: "Printer (" + model + ")", icon: IconPrinter, source: "ssdp", score: score}
+	case strings.Contains(hay, "hue bridge"), strings.Contains(hay, "homey"), strings.Contains(hay, "smartthings"):
+		return osGuess{name: "Smart-home hub (" + model + ")", icon: IconIoT, source: "ssdp", score: score}
+	case strings.Contains(server, "webos"):
+		return osGuess{name: "LG webOS TV (" + model + ")", icon: IconMedia, source: "ssdp", score: score}
+	case strings.Contains(server, "tizen"):
+		return osGuess{name: "Samsung Tizen TV (" + model + ")", icon: IconMedia, source: "ssdp", score: score}
+	case strings.Contains(server, "android"), strings.Contains(server, "chromecast"):
+		return osGuess{name: "Android TV (" + model + ")", icon: IconMedia, source: "ssdp", score: score}
+	case strings.Contains(types, "mediarenderer"), strings.Contains(types, "dial-multiscreen"), strings.Contains(hay, "sonos"):
+		return osGuess{name: "Media device (" + model + ")", icon: IconMedia, source: "ssdp", score: score}
+	}
+	return osGuess{}
 }

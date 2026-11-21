@@ -67,9 +67,15 @@ func (s *Server) UIHandler() http.Handler {
 	mux.HandleFunc("GET /auth/login", s.handleLogin)
 	mux.HandleFunc("GET /auth/callback", s.handleCallback)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
-	mux.HandleFunc("GET /logged-out", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><title>homelabmap</title><p>Signed out. <a href="/">Sign in again</a></p>`))
+	mux.HandleFunc("GET /signin", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("signed-out") != "" {
+			s.renderSignin(w, "/", true)
+			return
+		}
+		s.handleSignin(w, r)
+	})
+	mux.HandleFunc("GET /logged-out", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/signin?signed-out=1", http.StatusFound)
 	})
 
 	app := http.NewServeMux()
@@ -106,7 +112,9 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "no-referrer")
+		// same-origin: nothing leaks to other sites, and browsers keep
+		// sending a real Origin on our own form posts.
+		h.Set("Referrer-Policy", "same-origin")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		if s.cookieSecure() {
 			h.Set("Strict-Transport-Security", "max-age=31536000")

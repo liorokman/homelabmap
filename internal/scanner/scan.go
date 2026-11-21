@@ -71,6 +71,13 @@ func Scan(ctx context.Context, cfg Config, job obs.Job, log *slog.Logger) *obs.R
 			res.PVE = p
 		})
 	}
+	if cfg.SSDP {
+		wg.Go(func() {
+			d, err := ssdpDiscover(ctx, cfg, lanIface(cfg, res.Self))
+			errs.add("ssdp", err)
+			res.SSDP = d
+		})
+	}
 	wg.Wait()
 
 	// 3. OS fingerprinting for stale or brand-new hosts.

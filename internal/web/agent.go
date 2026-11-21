@@ -106,7 +106,7 @@ func (s *Server) buildJob(ctx context.Context, sc *store.Scan) (obs.Job, error) 
 	}
 	cutoff := s.now().Add(-s.cfg.OSRescan)
 	for _, n := range g.Nodes {
-		if n.Infra || len(n.MACs) == 0 || !weakOS(n.OSSource) {
+		if n.Infra || n.Absent || len(n.MACs) == 0 || !weakOS(n.OSSource) {
 			continue
 		}
 		if t, ok := scanned[n.MACs[0]]; ok && t.After(cutoff) {
@@ -172,6 +172,7 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g := topo.Build(res.JobID, &res, hist)
+	s.carryOver(ctx, g)
 	if err := s.store.Complete(ctx, res.JobID, &res, g, s.now()); err != nil {
 		s.serverError(w, "storing scan", err)
 		return
@@ -201,7 +202,12 @@ func (s *Server) rebuildStaleGraphs(ctx context.Context) {
 			s.log.Warn("loading result", "scan", id, "err", err)
 			continue
 		}
-		if err := s.store.UpdateGraph(ctx, id, topo.Build(id, res, hist)); err != nil {
+		g := topo.Build(id, res, hist)
+		// The old version of this same map knows which devices it carried.
+		if old, err := s.store.Graph(ctx, id); err == nil {
+			topo.CarryOver(g, old, g.ScanStarted, s.cfg.ForgetAfter)
+		}
+		if err := s.store.UpdateGraph(ctx, id, g); err != nil {
 			s.log.Warn("updating graph", "scan", id, "err", err)
 			continue
 		}
@@ -242,6 +248,7 @@ func (s *Server) completeProbe(w http.ResponseWriter, r *http.Request, res *obs.
 		return
 	}
 	g := topo.Build(res.JobID, merged, hist)
+	s.carryOver(ctx, g)
 	if err := s.store.CompleteProbe(ctx, res.JobID, merged, g, probed, s.now()); err != nil {
 		s.serverError(w, "storing probe", err)
 		return
@@ -318,4 +325,18 @@ func cleanSighting(x obs.Sighting) (obs.Sighting, bool) {
 		return x, false
 	}
 	return x, true
+}
+
+// carryOver keeps devices from the current map that this scan didn't see.
+func (s *Server) carryOver(ctx context.Context, g *topo.Graph) {
+	var prev *topo.Graph
+	if _, raw, err := s.store.LatestGraph(ctx); err == nil {
+		var p topo.Graph
+		if json.Unmarshal(raw, &p) == nil {
+			prev = &p
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		s.log.Warn("loading previous map; absent devices not carried this time", "err", err)
+	}
+	topo.CarryOver(g, prev, s.now(), s.cfg.ForgetAfter)
 }
