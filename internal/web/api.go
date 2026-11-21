@@ -17,6 +17,8 @@ type statusResponse struct {
 	IntervalSeconds int         `json:"intervalSeconds"`
 	ScannerLastSeen *time.Time  `json:"scannerLastSeen"`
 	ScannerOnline   bool        `json:"scannerOnline"`
+	// LastSightingAt is when the passive listener last reported anything.
+	LastSightingAt *time.Time `json:"lastSightingAt"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +45,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		// The agent re-polls at least every long-poll period.
 		resp.ScannerOnline = s.now().Sub(t) < 2*s.longPoll || resp.Active != nil && resp.Active.Status == store.StatusRunning
 	}
+	if t := s.lastSighting.Load(); t != 0 {
+		at := time.Unix(t, 0).UTC()
+		resp.LastSightingAt = &at
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleSightings(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.store.Sightings(r.Context(), 5000)
+	if err != nil {
+		s.serverError(w, "sightings", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rows)
 }
 
 // handleGraph returns the latest map. The graph JSON is stored ready-made.

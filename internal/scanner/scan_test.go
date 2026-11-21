@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -104,5 +105,61 @@ func TestIsVirtualIface(t *testing.T) {
 		if got := isVirtualIface(name); got != want {
 			t.Errorf("isVirtualIface(%q) = %v, want %v", name, got, want)
 		}
+	}
+}
+
+func TestKeepSighting(t *testing.T) {
+	cfg := Config{Subnets: []netip.Prefix{netip.MustParsePrefix("10.20.20.0/22")}}
+	own := map[string]bool{"aa:bb:cc:00:00:01": true}
+	cases := []struct {
+		s    obs.Sighting
+		want bool
+	}{
+		{obs.Sighting{MAC: "3C:7C:3F:00:00:01", IP: "10.20.23.210"}, true},
+		{obs.Sighting{MAC: "aa:bb:cc:00:00:01", IP: "10.20.23.80"}, false}, // the scanner host
+		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "10.1.2.3"}, false},      // other segment
+		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "fe80::1"}, true},        // IPv6 kept
+		{obs.Sighting{MAC: "01:00:5e:00:00:01", IP: "10.20.23.210"}, false},
+		{obs.Sighting{MAC: "nonsense", IP: "10.20.23.210"}, false},
+		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "nonsense"}, false},
+	}
+	for _, c := range cases {
+		if got := keepSighting(cfg, own, c.s); got != c.want {
+			t.Errorf("%+v: got %v", c.s, got)
+		}
+	}
+}
+
+func TestReadSightings(t *testing.T) {
+	in := `{"mac":"3c:7c:3f:00:00:01","ip":"10.20.23.210","via":"arp","at":"2026-11-21T08:00:00Z"}
+garbage
+{"mac":"","ip":"10.20.23.53"}
+{"mac":"3c:7c:3f:00:00:02","ip":"fe80::1","via":"ndp","at":"2026-11-21T08:00:01Z"}
+`
+	var got []obs.Sighting
+	readSightings(strings.NewReader(in), func(s obs.Sighting) { got = append(got, s) })
+	if len(got) != 2 || got[0].Via != "arp" || got[1].IP != "fe80::1" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestProbeIPsAndLanIface(t *testing.T) {
+	cfg := Config{Subnets: []netip.Prefix{netip.MustParsePrefix("10.20.20.0/22")}}
+	got := probeIPs(cfg, []obs.ProbeTarget{
+		{MAC: "a", IPs: []string{"10.20.23.90", "fe80::1", "10.0.0.1"}},
+		{MAC: "b", IPs: []string{"10.20.23.247", "10.20.23.90"}},
+	})
+	if strings.Join(got, ",") != "10.20.23.247,10.20.23.90" {
+		t.Errorf("probeIPs = %v", got)
+	}
+	self := obs.Self{Interfaces: []obs.SelfIface{
+		{Name: "eth1", MAC: "aa:00:00:00:00:01", IPs: []string{"10.9.9.9"}},
+		{Name: "eth0", MAC: "aa:00:00:00:00:02", IPs: []string{"10.20.23.80"}},
+	}}
+	if got := lanIface(cfg, self); got != "eth0" {
+		t.Errorf("lanIface = %q", got)
+	}
+	if got := lanIface(cfg, obs.Self{}); got != "" {
+		t.Errorf("lanIface without match = %q", got)
 	}
 }

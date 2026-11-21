@@ -12,10 +12,10 @@ Two containers on the Cosmos host, built from one Go module:
 
 | | `homelabmap-scanner` | `homelabmap-web` |
 |---|---|---|
-| Job | Observe: nmap sweep + OS detection, SNMP, UniFi API, PVE API, reverse DNS | Everything else: schedule, store, infer topology, UI, OIDC login |
+| Job | Observe: nmap sweep + OS detection, SNMP, UniFi API, PVE API, reverse DNS, passive ARP/NDP listening | Everything else: schedule, store, infer topology, UI, OIDC login |
 | Network | **host** (needs the LAN segment for ARP) | Cosmos bridge network, behind the Cosmos route |
 | Listens | **nothing** | `:8080` UI (route target), `:8081` agent API (published on host **127.0.0.1:8097** only) |
-| Privileges | non-root; `cap_drop ALL`, `cap_add NET_RAW, NET_ADMIN`; only `nmap` carries file caps | non-root, `cap_drop ALL` |
+| Privileges | non-root; `cap_drop ALL`, `cap_add NET_RAW, NET_ADMIN`; only `nmap` and `homelabmap-listen` (NET_RAW only) carry file caps | non-root, `cap_drop ALL` |
 | Secrets | SNMP community, UniFi key, PVE token, agent token | OIDC client, agent token |
 
 The scanner long-polls `GET /agent/v1/job` and posts results to
@@ -24,9 +24,10 @@ stored with each scan, so improved inference (`topo.Version`) rebuilds old
 maps on startup without rescanning.
 
 ```
-cmd/homelabmap-scanner   cmd/homelabmap-web
-internal/obs         wire format between the two
-internal/scanner     collectors: nmap.go snmp.go unifi.go pve.go dns.go
+cmd/homelabmap-scanner   cmd/homelabmap-web   cmd/homelabmap-listen (raw-socket helper)
+internal/obs         wire format between the two; probe merging
+internal/scanner     collectors: nmap.go snmp.go unifi.go pve.go dns.go; probe.go watch.go
+internal/sniff       ARP/NDP frame parsing, AF_PACKET listener
 internal/topo        inference: entities by MAC, links, placement, OS id
 internal/store       SQLite (modernc, pure Go), migrations via user_version
 internal/web         HTTP, OIDC+PKCE, scheduler, agent API, embedded UI
@@ -49,6 +50,29 @@ internal/web         HTTP, OIDC+PKCE, scheduler, agent API, embedded UI
   (50) > MAC vendor (30) > randomized Wi-Fi MAC (20). nmap runs only for hosts
   whose OS is still a guess, at most every 7 days per MAC.
 
+## New devices between scans
+
+The scanner runs `homelabmap-listen` on the LAN interface: two AF_PACKET sockets,
+one for ARP and one for IPv6 neighbour discovery (a BPF filter passes only
+ICMPv6 types 133–136; all-multicast so solicited-node traffic is heard).
+Each MAC/IP pair is reported at most every 10 minutes and forwarded to
+`POST /agent/v1/sightings`.
+
+The web records every sighting (the **Heard** table, IPv6 addresses and
+"last seen" on devices). A MAC never seen before with an IPv4 address gets
+a **probe**: a job for just that device (ARP ping, OS fingerprint, reverse
+DNS, fresh UniFi and PVE data) whose result is merged into the latest full
+scan, so it appears on the map within a minute. SNMP is left to the next
+hourly scan, so a new *wired* device gets its switch port then; Wi-Fi
+devices are placed right away from UniFi. Each MAC is probed once, at most
+`HOMELABMAP_PROBE_MAX_PER_HOUR` (default 30) devices an hour; probes never delay
+full scans.
+IPv6-only devices are listed but not probed until they use IPv4.
+
+Limits: the listener hears only what reaches the scanner host's port:
+broadcast ARP from everyone, but replies and NDP between other hosts only
+if switches flood them (MLD snooping can hide some NDP).
+
 ## Device quirks handled
 
 * **Cisco small-business switches (some firmware):** `lldpRemManAddrTable` truncates or drops addresses
@@ -67,6 +91,8 @@ internal/web         HTTP, OIDC+PKCE, scheduler, agent API, embedded UI
 `deploy/render.py`, which renders `deploy/cosmos-compose.json` into
 `deploy/cosmos-compose.rendered.json` (also gitignored). All variables are
 `HOMELABMAP_*`; see `internal/scanner/config.go` and `internal/web/config.go`.
+Passive listening is on by default (`HOMELABMAP_PASSIVE=false` turns it off);
+`HOMELABMAP_PROBE_MAX_PER_HOUR=0` keeps listening but never probes.
 
 ## Development
 

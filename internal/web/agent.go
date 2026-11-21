@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -46,13 +47,14 @@ func (s *Server) handleAgentJob(w http.ResponseWriter, r *http.Request) {
 		sc, err := s.store.Claim(ctx, s.now())
 		switch {
 		case err == nil:
-			job, err := s.buildJob(ctx, sc.ID)
+			job, err := s.buildJob(ctx, sc)
 			if err != nil {
 				_ = s.store.Fail(ctx, sc.ID, "building job failed", s.now())
 				s.serverError(w, "building job", err)
 				return
 			}
-			s.log.Info("scan handed to scanner", "scan", sc.ID, "trigger", sc.Trigger, "os_targets", len(job.OSScanMACs))
+			s.log.Info("scan handed to scanner", "scan", sc.ID, "trigger", sc.Trigger,
+				"os_targets", len(job.OSScanMACs), "probe_targets", len(job.Probe))
 			writeJSON(w, http.StatusOK, job)
 			return
 		case !errors.Is(err, store.ErrNotFound):
@@ -73,8 +75,12 @@ func (s *Server) handleAgentJob(w http.ResponseWriter, r *http.Request) {
 
 // buildJob picks hosts whose OS is still a guess and that weren't
 // fingerprinted recently.
-func (s *Server) buildJob(ctx context.Context, id int64) (obs.Job, error) {
-	job := obs.Job{ID: id, OSScanMax: s.cfg.OSScanMax}
+func (s *Server) buildJob(ctx context.Context, sc *store.Scan) (obs.Job, error) {
+	job := obs.Job{ID: sc.ID, OSScanMax: s.cfg.OSScanMax}
+	if sc.Trigger == store.TriggerProbe {
+		job.Probe = sc.Targets
+		return job, nil
+	}
 	if s.cfg.OSScanMax == 0 {
 		return job, nil
 	}
@@ -136,9 +142,14 @@ func (s *Server) handleAgentResult(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad result: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	active, err := s.store.Active(ctx)
-	if err != nil || active.ID != res.JobID || active.Status != store.StatusRunning {
+	sc, err := s.store.Get(ctx, res.JobID)
+	if err != nil || sc.Status != store.StatusRunning {
 		http.Error(w, fmt.Sprintf("scan %d is not running", res.JobID), http.StatusConflict)
+		return
+	}
+	// The job decides what kind of result this is, not the scanner.
+	if sc.Trigger == store.TriggerProbe {
+		s.completeProbe(w, r, &res)
 		return
 	}
 
@@ -196,4 +207,115 @@ func (s *Server) rebuildStaleGraphs(ctx context.Context) {
 		}
 		s.log.Info("graph rebuilt with new inference", "scan", id, "version", topo.Version)
 	}
+}
+
+// completeProbe merges a probe into the current map. A device that didn't
+// answer leaves the map alone.
+func (s *Server) completeProbe(w http.ResponseWriter, r *http.Request, res *obs.Result) {
+	ctx := r.Context()
+	res.Probe = true
+	var probed []string
+	for _, h := range res.Sweep {
+		if h.MAC != "" {
+			probed = append(probed, h.MAC)
+		}
+	}
+	if len(probed) == 0 {
+		msg := "probed device did not answer"
+		if len(res.Errors) > 0 {
+			msg += ": " + strings.Join(res.Errors, "; ")
+		}
+		_ = s.store.Fail(ctx, res.JobID, msg, s.now())
+		s.log.Info("probe found nothing", "scan", res.JobID, "reason", msg)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	base, err := s.store.LatestResult(ctx)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.serverError(w, "loading latest result", err)
+		return
+	}
+	merged := obs.MergeProbe(base, res)
+	hist, err := s.store.History(ctx)
+	if err != nil {
+		s.serverError(w, "loading history", err)
+		return
+	}
+	g := topo.Build(res.JobID, merged, hist)
+	if err := s.store.CompleteProbe(ctx, res.JobID, merged, g, probed, s.now()); err != nil {
+		s.serverError(w, "storing probe", err)
+		return
+	}
+	s.log.Info("probe stored", "scan", res.JobID, "devices", probed, "nodes", len(g.Nodes),
+		"took", res.FinishedAt.Sub(res.StartedAt).Round(time.Second))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+const maxSightings = 2000
+
+// handleAgentSightings records what the passive listener heard and queues
+// a probe for devices never seen before.
+func (s *Server) handleAgentSightings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var body obs.Sightings
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		http.Error(w, "bad sightings: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(body.Sightings) > maxSightings {
+		http.Error(w, "too many sightings", http.StatusRequestEntityTooLarge)
+		return
+	}
+	clean := make([]obs.Sighting, 0, len(body.Sightings))
+	for _, x := range body.Sightings {
+		if c, ok := cleanSighting(x); ok {
+			clean = append(clean, c)
+		}
+	}
+	if len(clean) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	now := s.now()
+	s.lastSighting.Store(now.Unix())
+	fresh, err := s.store.RecordSightings(ctx, clean, now)
+	if err != nil {
+		s.serverError(w, "recording sightings", err)
+		return
+	}
+	if len(fresh) > 0 && s.cfg.ProbeMaxPerHour > 0 {
+		probe, accepted, err := s.store.EnqueueProbe(ctx, fresh, s.cfg.ProbeMaxPerHour, now)
+		if err != nil {
+			s.serverError(w, "queueing probe", err)
+			return
+		}
+		if len(accepted) < len(fresh) {
+			s.log.Warn("probe budget exhausted; the next full scan will cover the rest",
+				"new", len(fresh), "accepted", len(accepted), "per_hour", s.cfg.ProbeMaxPerHour)
+		}
+		if probe != nil {
+			s.log.Info("new device heard; probe queued", "scan", probe.ID, "macs", accepted)
+			s.notifyAgent()
+		} else if len(accepted) > 0 {
+			s.log.Info("new device heard; a full scan is already queued", "macs", accepted)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// cleanSighting validates and normalises one sighting from the scanner.
+func cleanSighting(x obs.Sighting) (obs.Sighting, bool) {
+	x.MAC = obs.NormMAC(x.MAC)
+	if x.MAC == "" || obs.IsMulticast(x.MAC) {
+		return x, false
+	}
+	a, err := netip.ParseAddr(x.IP)
+	if err != nil || a.IsUnspecified() || a.IsMulticast() || a.IsLoopback() || a.Zone() != "" {
+		return x, false
+	}
+	x.IP = a.String()
+	if x.Via != "arp" && x.Via != "ndp" {
+		return x, false
+	}
+	return x, true
 }

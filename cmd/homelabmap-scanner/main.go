@@ -67,6 +67,10 @@ func run() error {
 		return fmt.Errorf("HOMELABMAP_AGENT_TOKEN is required")
 	}
 	log.Info("homelabmap-scanner starting", "version", scanner.Version, "server", cfg.Server, "subnets", cfg.Subnets,
-		"unifi", cfg.UniFiURL != "", "pve", cfg.PVEURL != "", "nmap_privileged", cfg.NmapPrivileged)
-	return scanner.NewAgent(cfg, log).Run(ctx)
+		"unifi", cfg.UniFiURL != "", "pve", cfg.PVEURL != "", "nmap_privileged", cfg.NmapPrivileged, "passive", cfg.Passive)
+	agent := scanner.NewAgent(cfg, log)
+	if cfg.Passive {
+		go agent.Watch(ctx)
+	}
+	return agent.Run(ctx)
 }

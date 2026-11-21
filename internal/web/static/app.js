@@ -1,4 +1,5 @@
 import { ICONS } from './icons.js';
+import { createTable } from './table.js';
 
 const $ = (sel) => document.querySelector(sel);
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -99,6 +100,12 @@ const state = {
   status: null,
   layout: store.get('layout', 'fcose'),
   filters: { off: true, ...store.get('filters', { edge: true, virtual: true, unknown: true, ports: false }) },
+  // #table, #table/heard etc. win over the remembered view.
+  view: location.hash.startsWith('#table') ? 'table'
+    : location.hash === '#map' ? 'map'
+      : store.get('view', 'map') === 'table' ? 'table' : 'map',
+  table: null,
+  mapStale: false, // laid out while hidden: fit when shown
   pollTimer: null,
 };
 
@@ -326,7 +333,10 @@ async function loadGraph() {
   applyFilters();
   renderWarnings(graph.warnings || []);
   renderEmpty();
-  if (isFirst || added.length) runLayout();
+  if (isFirst || added.length) {
+    runLayout();
+    if (state.view !== 'map') state.mapStale = true;
+  }
   if (!$('#details').hidden) {
     const id = $('#details').dataset.id;
     const n = cy.getElementById(id);
@@ -386,6 +396,9 @@ async function refreshStatus() {
     parts.push(`map from ${hhmm(st.latest.finishedAt)} · ${st.latest.nodes} devices, ${st.latest.edges} links`);
   }
   if (!st.active) parts.push(`next scan ${hhmm(st.nextScanAt)}`);
+  if (st.lastSightingAt && Date.now() - new Date(st.lastSightingAt).getTime() < 30 * 60 * 1000) {
+    parts.push(`<span title="Last ARP/IPv6 neighbour discovery report ${esc(ago(st.lastSightingAt))}">listening for new devices</span>`);
+  }
   $('#status').innerHTML = parts.join(' · ');
   $('#scan-now').disabled = Boolean(st.active);
   $('#scan-now').textContent = st.active ? 'Scanning…' : 'Scan now';
@@ -397,6 +410,7 @@ async function refreshStatus() {
   } else {
     renderEmpty();
   }
+  if (state.view === 'table') state.table.refresh();
   schedulePoll(st.active ? 4000 : 15000);
 }
 
@@ -419,19 +433,30 @@ async function scanNow() {
 
 // ---------- filters and search ----------
 
+// isVisible applies the "Show" filters to a node's data (map and table).
+function isVisible(d) {
+  const f = state.filters;
+  const virtual = d.role === 'vm' || d.role === 'container';
+  return !((!f.edge && !d.infra) || (!f.virtual && virtual) || (!f.unknown && d.connection === 'unknown') ||
+    (f.off === false && d.power === 'off'));
+}
+
+// matchesQuery is the search box's test (q already lower-cased).
+function matchesQuery(d, q) {
+  if (!q) return true;
+  const hay = [d.label, d.os, d.vendor, d.location, d.model, ...(d.ips || []), ...(d.ipv6 || []), ...(d.macs || []), ...(d.dns || [])]
+    .join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
 function applyFilters() {
   const f = state.filters;
   const cy = state.cy;
   cy.batch(() => {
-    cy.nodes().forEach((n) => {
-      const d = n.data();
-      const virtual = d.role === 'vm' || d.role === 'container';
-      const hide = (!f.edge && !d.infra) || (!f.virtual && virtual) || (!f.unknown && d.connection === 'unknown') ||
-        (f.off === false && d.power === 'off');
-      n.toggleClass('hidden', hide);
-    });
+    cy.nodes().forEach((n) => n.toggleClass('hidden', !isVisible(n.data())));
     cy.edges().toggleClass('ports', f.ports);
   });
+  if (state.view === 'table') state.table.render();
 }
 
 function applySearch(q) {
@@ -440,12 +465,7 @@ function applySearch(q) {
   cy.batch(() => {
     cy.elements().removeClass('faded match');
     if (!q) return;
-    const hits = cy.nodes().filter((n) => {
-      const d = n.data();
-      const hay = [d.label, d.os, d.vendor, d.location, d.model, ...(d.ips || []), ...(d.macs || []), ...(d.dns || [])]
-        .join(' ').toLowerCase();
-      return hay.includes(q);
-    });
+    const hits = cy.nodes().filter((n) => matchesQuery(n.data(), q));
     cy.elements().not(hits).not(hits.connectedEdges()).addClass('faded');
     hits.addClass('match');
   });
@@ -527,6 +547,7 @@ function showDetails(node) {
   $('#details-body').innerHTML = nodeHeader(d, 'h2') +
     '<dl class="kv">' +
     row('IP', d.ips, 'mono') +
+    row('IPv6', d.ipv6, 'mono') +
     row('MAC', d.macs, 'mono') +
     row('DNS', d.dns) +
     row('OS', osLine(d)) +
@@ -536,6 +557,7 @@ function showDetails(node) {
     row('Model', d.model) +
     row('Where', d.location) +
     row('First seen', d.firstSeen ? dateTime(d.firstSeen) : '') +
+    row('Last seen', d.lastSeen ? `${ago(d.lastSeen)} (${dateTime(d.lastSeen)})` : '') +
     '</dl>' +
     (d.openPorts?.length ? `<section><h4>Open ports</h4><div class="mono">${d.openPorts.map(esc).join('<br>')}</div></section>` : '') +
     (links.length ? `<section><h4>Connections</h4><ul>${links.join('')}</ul></section>` : '') +
@@ -590,21 +612,51 @@ function restyle() {
   renderLegend();
 }
 
+// ---------- views ----------
+
+function setView(view) {
+  state.view = view;
+  store.set('view', view);
+  document.body.dataset.view = view;
+  if (view === 'map') history.replaceState(null, '', '#map');
+  document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
+  $('.map-wrap').hidden = view !== 'map';
+  $('#table-view').hidden = view !== 'table';
+  hideTooltip();
+  if (view === 'map') {
+    state.cy.resize();
+    if (state.mapStale) {
+      state.mapStale = false;
+      state.cy.fit(state.cy.elements().not('.hidden'), 40);
+    }
+  } else {
+    state.table.render();
+  }
+}
+
+// selectNode shows a device's details from anywhere (table rows, links in
+// the details panel); on the map it also centres it.
+function selectNode(id) {
+  const n = state.cy.getElementById(id);
+  if (!n.length) return;
+  state.cy.$(':selected').unselect();
+  n.select();
+  showDetails(n);
+  if (state.view === 'map') state.cy.animate({ center: { eles: n }, duration: 250 });
+  else state.table.highlight(id);
+}
+
 // ---------- wiring ----------
 
 function bindControls() {
+  document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
   $('#scan-now').addEventListener('click', scanNow);
   $('#fit').addEventListener('click', () => state.cy.fit(state.cy.elements().not('.hidden'), 40));
   $('#relayout').addEventListener('click', () => { store.del(positionsKey()); runLayout({ fresh: true }); });
   $('#details-close').addEventListener('click', closeDetails);
   $('#details-body').addEventListener('click', (e) => {
     const id = e.target.closest('[data-goto]')?.dataset.goto;
-    if (!id) return;
-    const n = state.cy.getElementById(id);
-    state.cy.$(':selected').unselect();
-    n.select();
-    state.cy.animate({ center: { eles: n }, duration: 250 });
-    showDetails(n);
+    if (id) selectNode(id);
   });
 
   for (const [id, key] of [['#f-edge', 'edge'], ['#f-virtual', 'virtual'], ['#f-unknown', 'unknown'], ['#f-off', 'off'], ['#f-ports', 'ports']]) {
@@ -628,14 +680,18 @@ function bindControls() {
   });
 
   const search = $('#search');
-  search.addEventListener('input', () => applySearch(search.value));
+  search.addEventListener('input', () => {
+    applySearch(search.value);
+    if (state.view === 'table') state.table.render();
+  });
   search.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && state.view === 'map') {
       const hits = applySearch(search.value);
       if (hits.length) state.cy.animate({ fit: { eles: hits, padding: 120 }, duration: 300 });
     } else if (e.key === 'Escape') {
       search.value = '';
       applySearch('');
+      if (state.view === 'table') state.table.render();
       search.blur();
     }
   });
@@ -650,6 +706,18 @@ function bindControls() {
 }
 
 initCy();
+state.table = createTable({
+  esc, dateTime, ago, api, store, powerLine,
+  roleName: (r) => ROLE_NAME[r] || r,
+  kindName: (k) => KIND_NAME[k] || k,
+  graph: () => state.graph,
+  query: () => $('#search').value.trim().toLowerCase(),
+  visible: isVisible,
+  matches: matchesQuery,
+  select: selectNode,
+  initial: location.hash.split('/')[1],
+});
 renderLegend();
 bindControls();
+setView(state.view);
 refreshStatus();

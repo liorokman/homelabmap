@@ -2,7 +2,9 @@ package topo
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/liorokman/homelabmap/internal/obs"
 )
@@ -242,5 +244,21 @@ func TestParseUniFiOfflineDevice(t *testing.T) {
 	devs, _ := parseUniFi(u)
 	if len(devs) != 2 || !devs[0].Offline || devs[1].Offline {
 		t.Errorf("offline flags: %+v", devs)
+	}
+}
+
+func TestPassiveHistoryOnNodes(t *testing.T) {
+	mac := "00:11:22:33:44:55"
+	seen := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
+	g := Build(1, &obs.Result{Sweep: []obs.SweepHost{{IP: "10.0.0.20", MAC: mac}}}, History{
+		IPv6:     map[string][]string{mac: {"fe80::1", "2001:db8::1", "fe80::1"}},
+		LastSeen: map[string]time.Time{mac: seen},
+	})
+	if len(g.Nodes) != 1 {
+		t.Fatalf("nodes: %+v", g.Nodes)
+	}
+	n := g.Nodes[0]
+	if strings.Join(n.IPv6, ",") != "2001:db8::1,fe80::1" || !n.LastSeen.Equal(seen) {
+		t.Errorf("ipv6 %v last seen %v", n.IPv6, n.LastSeen)
 	}
 }

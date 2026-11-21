@@ -18,6 +18,10 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5l-5.5 5.5M12 11.5l5.5 5.5"/></svg>
     <span>homelabmap</span>
   </div>
+  <nav class="tabs" aria-label="View">
+    <button type="button" data-view="map" aria-pressed="true">Map</button>
+    <button type="button" data-view="table" aria-pressed="false">Table</button>
+  </nav>
   <div class="status" id="status" aria-live="polite">Loading…</div>
   <div class="bar-actions">
     <button id="scan-now" class="btn primary" type="button">Scan now</button>
@@ -39,10 +43,10 @@
       <label><input type="checkbox" id="f-virtual" checked> VMs &amp; containers</label>
       <label><input type="checkbox" id="f-unknown" checked> Devices with unknown location</label>
       <label><input type="checkbox" id="f-off" checked> Powered-off devices</label>
-      <label><input type="checkbox" id="f-ports"> Port labels on links</label>
+      <label class="map-only"><input type="checkbox" id="f-ports"> Port labels on links</label>
     </fieldset>
 
-    <fieldset>
+    <fieldset class="map-only">
       <legend>Layout</legend>
       <div class="seg" role="radiogroup" aria-label="Layout">
         <button type="button" data-layout="fcose" aria-pressed="true">Organic</button>
@@ -55,7 +59,7 @@
       </div>
     </fieldset>
 
-    <fieldset>
+    <fieldset class="map-only">
       <legend>Legend</legend>
       <div id="legend" class="legend"></div>
     </fieldset>
@@ -70,6 +74,20 @@
     <div id="map" class="map" role="img" aria-label="Network topology map"></div>
     <div id="empty" class="empty" hidden></div>
     <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  </main>
+
+  <main id="table-view" class="table-wrap" hidden>
+    <div class="table-bar">
+      <div class="seg" role="group" aria-label="Table">
+        <button type="button" data-table="devices" aria-pressed="true">Devices</button>
+        <button type="button" data-table="links" aria-pressed="false">Links</button>
+        <button type="button" data-table="sightings" aria-pressed="false">Heard</button>
+        <button type="button" data-table="scans" aria-pressed="false">Scans</button>
+      </div>
+      <span id="table-count" class="src"></span>
+      <button type="button" class="btn" id="table-csv">Download CSV</button>
+    </div>
+    <div class="table-scroll"></div>
   </main>
 
   <aside id="details" class="details" aria-label="Device details" hidden>

@@ -29,6 +29,8 @@ type Server struct {
 
 	// scannerSeen is the unix time of the last agent poll.
 	scannerSeen atomic.Int64
+	// lastSighting is the unix time the passive listener last reported.
+	lastSighting atomic.Int64
 	// wake nudges a long-polling agent when a scan is queued.
 	wake chan struct{}
 	// longPoll is how long an agent poll waits for work.
@@ -74,6 +76,7 @@ func (s *Server) UIHandler() http.Handler {
 	app.HandleFunc("GET /api/status", s.handleStatus)
 	app.HandleFunc("GET /api/graph", s.handleGraph)
 	app.HandleFunc("GET /api/scans", s.handleScans)
+	app.HandleFunc("GET /api/sightings", s.handleSightings)
 	app.HandleFunc("POST /api/scan", s.handleScanNow)
 	app.Handle("GET /", files)
 	mux.Handle("/", s.requireUser(app))
@@ -87,6 +90,7 @@ func (s *Server) AgentHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /agent/v1/job", s.handleAgentJob)
 	mux.HandleFunc("POST /agent/v1/result", s.handleAgentResult)
+	mux.HandleFunc("POST /agent/v1/sightings", s.handleAgentSightings)
 	return s.requireAgent(mux)
 }
 

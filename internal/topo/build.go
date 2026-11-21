@@ -425,6 +425,8 @@ func (b *builder) node(e *entity, gw *entity) Node {
 		n.Icon = IconUnknown
 	}
 
+	n.IPv6, n.LastSeen = b.passive(e)
+
 	var first time.Time
 	for m := range e.macs {
 		if t, ok := b.hist.FirstSeen[m]; ok && (first.IsZero() || t.Before(first)) {
@@ -435,4 +437,32 @@ func (b *builder) node(e *entity, gw *entity) Node {
 	cutoff := b.res.StartedAt.Add(-24 * time.Hour)
 	n.New = !b.hist.Since.IsZero() && b.hist.Since.Before(cutoff) && (first.IsZero() || first.After(cutoff))
 	return n
+}
+
+// passive gathers what the listener heard for the entity's MACs: IPv6
+// addresses (global ones first) and the latest time any MAC was seen.
+func (b *builder) passive(e *entity) ([]string, time.Time) {
+	var v6 []string
+	var last time.Time
+	for _, m := range e.sortedMACs() {
+		for _, ip := range b.hist.IPv6[m] {
+			if !slices.Contains(v6, ip) {
+				v6 = append(v6, ip)
+			}
+		}
+		if t := b.hist.LastSeen[m]; t.After(last) {
+			last = t
+		}
+	}
+	slices.SortStableFunc(v6, func(a, c string) int {
+		return boolInt(strings.HasPrefix(a, "fe80:")) - boolInt(strings.HasPrefix(c, "fe80:"))
+	})
+	return v6, last
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

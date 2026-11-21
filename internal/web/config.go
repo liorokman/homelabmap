@@ -32,6 +32,8 @@ type Config struct {
 	Retention    time.Duration
 	OSRescan     time.Duration
 	OSScanMax    int
+	// ProbeMaxPerHour caps quick scans of newly heard devices (0 = off).
+	ProbeMaxPerHour int
 
 	// InsecureNoAuth disables login for local development. Refused unless
 	// the UI listens on loopback.
@@ -87,6 +89,14 @@ func LoadConfig() (Config, error) {
 			errs = append(errs, fmt.Errorf("HOMELABMAP_OS_SCAN_MAX: invalid %q", v))
 		}
 		c.OSScanMax = n
+	}
+	c.ProbeMaxPerHour = 30
+	if v := os.Getenv("HOMELABMAP_PROBE_MAX_PER_HOUR"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			errs = append(errs, fmt.Errorf("HOMELABMAP_PROBE_MAX_PER_HOUR: invalid %q", v))
+		}
+		c.ProbeMaxPerHour = n
 	}
 	if v := os.Getenv("HOMELABMAP_INSECURE_NO_AUTH"); v != "" {
 		b, err := strconv.ParseBool(v)

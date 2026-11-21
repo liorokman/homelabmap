@@ -52,11 +52,17 @@ func (a *Agent) Run(ctx context.Context) error {
 			continue // long-poll timed out without work
 		}
 
-		a.log.Info("scan started", "job", job.ID)
 		jctx, cancel := context.WithTimeout(ctx, a.cfg.JobTimeout)
-		res := Scan(jctx, a.cfg, *job, a.log)
+		var res *obs.Result
+		if len(job.Probe) > 0 {
+			a.log.Info("probe started", "job", job.ID, "devices", len(job.Probe))
+			res = Probe(jctx, a.cfg, *job, a.log)
+		} else {
+			a.log.Info("scan started", "job", job.ID)
+			res = Scan(jctx, a.cfg, *job, a.log)
+		}
 		cancel()
-		a.log.Info("scan finished", "job", job.ID,
+		a.log.Info("job finished", "job", job.ID, "probe", res.Probe,
 			"hosts", len(res.Sweep), "snmp", len(res.SNMP), "os_scans", len(res.OSScans),
 			"errors", len(res.Errors), "took", res.FinishedAt.Sub(res.StartedAt).Round(time.Second))
 

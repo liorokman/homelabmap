@@ -38,6 +38,11 @@ type Config struct {
 	OSScanMax      int
 
 	JobTimeout time.Duration
+
+	// Passive listening for new devices (ARP and IPv6 neighbour discovery)
+	// through the homelabmap-listen helper.
+	Passive    bool
+	ListenPath string
 }
 
 type SNMPConfig struct {
@@ -68,6 +73,7 @@ func LoadConfig() (Config, error) {
 		PVETokenID:     os.Getenv("HOMELABMAP_PVE_TOKEN_ID"),
 		PVETokenSecret: os.Getenv("HOMELABMAP_PVE_TOKEN_SECRET"),
 		NmapPath:       env("HOMELABMAP_NMAP_PATH", "nmap"),
+		ListenPath:     env("HOMELABMAP_LISTEN_PATH", "homelabmap-listen"),
 		SNMP: SNMPConfig{
 			Version:   env("HOMELABMAP_SNMP_VERSION", "2c"),
 			Community: os.Getenv("HOMELABMAP_SNMP_COMMUNITY"),
@@ -88,6 +94,9 @@ func LoadConfig() (Config, error) {
 		errs = append(errs, err)
 	}
 	if c.NmapPrivileged, err = envBool("HOMELABMAP_NMAP_PRIVILEGED", false); err != nil {
+		errs = append(errs, err)
+	}
+	if c.Passive, err = envBool("HOMELABMAP_PASSIVE", true); err != nil {
 		errs = append(errs, err)
 	}
 	if c.OSScanMax, err = envInt("HOMELABMAP_OS_SCAN_MAX", 48); err != nil {

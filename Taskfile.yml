@@ -24,11 +24,11 @@ tasks:
       - go vet ./...
 
   build:
-    desc: Build both binaries into out/
+    desc: Build the binaries into out/
     env:
       CGO_ENABLED: "0"
     cmds:
-      - go build -o out/ ./cmd/homelabmap-web ./cmd/homelabmap-scanner
+      - go build -o out/ ./cmd/homelabmap-web ./cmd/homelabmap-scanner ./cmd/homelabmap-listen
 
   images:
     desc: "Build both images (VERSION=x.y.z task images)"

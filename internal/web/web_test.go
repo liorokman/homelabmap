@@ -133,7 +133,7 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	cfg := Config{
 		PublicURL: pub, AgentToken: testToken, OIDCIssuer: idp.srv.URL, OIDCClientID: "homelabmap",
 		OIDCScopes: []string{"openid", "profile", "email"}, SessionTTL: time.Hour,
-		ScanInterval: time.Hour, Retention: 24 * time.Hour, OSRescan: time.Hour, OSScanMax: 10,
+		ScanInterval: time.Hour, Retention: 24 * time.Hour, OSRescan: time.Hour, OSScanMax: 10, ProbeMaxPerHour: 5,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -407,7 +407,7 @@ func TestConfigValidation(t *testing.T) {
 		"HOMELABMAP_OIDC_ISSUER": "https://idp.example/app/", "HOMELABMAP_OIDC_CLIENT_ID": "homelabmap",
 	}
 	set := func(t *testing.T, over map[string]string) {
-		for _, k := range []string{"HOMELABMAP_PUBLIC_URL", "HOMELABMAP_AGENT_TOKEN", "HOMELABMAP_OIDC_ISSUER", "HOMELABMAP_OIDC_CLIENT_ID", "HOMELABMAP_INSECURE_NO_AUTH", "HOMELABMAP_LISTEN", "HOMELABMAP_SCAN_INTERVAL"} {
+		for _, k := range []string{"HOMELABMAP_PUBLIC_URL", "HOMELABMAP_AGENT_TOKEN", "HOMELABMAP_OIDC_ISSUER", "HOMELABMAP_OIDC_CLIENT_ID", "HOMELABMAP_INSECURE_NO_AUTH", "HOMELABMAP_LISTEN", "HOMELABMAP_SCAN_INTERVAL", "HOMELABMAP_PROBE_MAX_PER_HOUR"} {
 			t.Setenv(k, "")
 		}
 		for k, v := range base {
@@ -429,6 +429,7 @@ func TestConfigValidation(t *testing.T) {
 		"no oidc":                  {"HOMELABMAP_OIDC_ISSUER": ""},
 		"no-auth on all ifaces":    {"HOMELABMAP_INSECURE_NO_AUTH": "true", "HOMELABMAP_LISTEN": ":8080"},
 		"scan interval too short":  {"HOMELABMAP_SCAN_INTERVAL": "10s"},
+		"negative probe budget":    {"HOMELABMAP_PROBE_MAX_PER_HOUR": "-1"},
 	}
 	for name, over := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -445,4 +446,129 @@ func TestConfigValidation(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+// postJSON sends v as the agent.
+func (h *harness) postJSON(t *testing.T, path string, v any) *http.Response {
+	t.Helper()
+	b, _ := json.Marshal(v)
+	return h.agentDo(t, "POST", path, testToken, bytes.NewReader(b), false)
+}
+
+func TestPassiveSightingProbesNewDevice(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+
+	// A first full scan establishes the map.
+	sc, _, _ := h.st.Enqueue(ctx, "schedule", time.Now())
+	h.st.Claim(ctx, time.Now())
+	full := obs.Result{JobID: sc.ID, StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(),
+		Sweep: []obs.SweepHost{{IP: "10.0.0.1", MAC: "00:00:5e:00:00:01"}},
+		SNMP:  []obs.SNMPDevice{{IP: "10.0.0.1", SysName: "gw", Forwarding: true, BridgeMAC: "00:00:5e:00:00:01"}}}
+	if r := h.postJSON(t, "/agent/v1/result", full); r.StatusCode != http.StatusNoContent {
+		t.Fatalf("full result: %d", r.StatusCode)
+	}
+
+	// Junk is dropped; a known MAC and a new one are recorded.
+	r := h.postJSON(t, "/agent/v1/sightings", obs.Sightings{Sightings: []obs.Sighting{
+		{MAC: "00:00:5e:00:00:01", IP: "10.0.0.1", Via: "arp"},
+		{MAC: "3C:7C:3F:00:00:42", IP: "10.0.0.42", Via: "arp"},
+		{MAC: "3c:7c:3f:00:00:42", IP: "fe80::3e7c:3fff:fe00:42", Via: "ndp"},
+		{MAC: "01:00:5e:00:00:01", IP: "10.0.0.9", Via: "arp"},
+		{MAC: "3c:7c:3f:00:00:43", IP: "not-an-ip", Via: "arp"},
+		{MAC: "3c:7c:3f:00:00:44", IP: "10.0.0.44", Via: "smoke-signals"},
+	}})
+	if r.StatusCode != http.StatusNoContent {
+		t.Fatalf("sightings: %d", r.StatusCode)
+	}
+
+	// The scanner gets a probe for just the new device.
+	r = h.agentDo(t, "GET", "/agent/v1/job", testToken, nil, false)
+	var job obs.Job
+	if json.NewDecoder(r.Body).Decode(&job) != nil || len(job.Probe) != 1 || job.Probe[0].MAC != "3c:7c:3f:00:00:42" ||
+		len(job.Probe[0].IPs) != 1 || job.Probe[0].IPs[0] != "10.0.0.42" {
+		t.Fatalf("probe job: %+v", job)
+	}
+
+	probe := obs.Result{JobID: job.ID, StartedAt: time.Now().UTC(), FinishedAt: time.Now().UTC(), Probe: true,
+		Sweep: []obs.SweepHost{{IP: "10.0.0.42", MAC: "3c:7c:3f:00:00:42", Vendor: "ASUSTek"}},
+		DNS:   map[string]string{"10.0.0.42": "laptop.lan"}}
+	if r := h.postJSON(t, "/agent/v1/result", probe); r.StatusCode != http.StatusNoContent {
+		b, _ := io.ReadAll(r.Body)
+		t.Fatalf("probe result: %d %s", r.StatusCode, b)
+	}
+
+	// The map now has both devices: the probe merged into the full scan.
+	h.login(t)
+	var g struct {
+		Nodes []struct {
+			Label string
+			IPv6  []string
+		}
+	}
+	if err := json.NewDecoder(h.get(t, "/api/graph").Body).Decode(&g); err != nil || len(g.Nodes) != 2 {
+		t.Fatalf("graph after probe: %+v %v", g, err)
+	}
+	var laptop bool
+	for _, n := range g.Nodes {
+		if n.Label == "laptop" {
+			laptop = len(n.IPv6) == 1
+		}
+	}
+	if !laptop {
+		t.Errorf("probed device missing or without its IPv6 address: %+v", g.Nodes)
+	}
+
+	var rows []store.SightingRow
+	if err := json.NewDecoder(h.get(t, "/api/sightings").Body).Decode(&rows); err != nil || len(rows) != 3 {
+		t.Errorf("sightings API: %+v %v", rows, err)
+	}
+	var st statusResponse
+	if err := json.NewDecoder(h.get(t, "/api/status").Body).Decode(&st); err != nil || st.LastSightingAt == nil {
+		t.Errorf("status lastSightingAt: %+v %v", st, err)
+	}
+
+	// Hearing the same device again doesn't probe it again.
+	h.postJSON(t, "/agent/v1/sightings", obs.Sightings{Sightings: []obs.Sighting{{MAC: "3c:7c:3f:00:00:42", IP: "10.0.0.42", Via: "arp"}}})
+	if r := h.agentDo(t, "GET", "/agent/v1/job", testToken, nil, false); r.StatusCode != http.StatusNoContent {
+		t.Errorf("known device probed again: %d", r.StatusCode)
+	}
+}
+
+func TestProbeWithoutAnswerKeepsMap(t *testing.T) {
+	h := newHarness(t, nil)
+	ctx := context.Background()
+	p, _, _ := h.st.EnqueueProbe(ctx, []obs.ProbeTarget{{MAC: "3c:7c:3f:00:00:42", IPs: []string{"10.0.0.42"}}}, 10, time.Now())
+	h.st.Claim(ctx, time.Now())
+	if r := h.postJSON(t, "/agent/v1/result", obs.Result{JobID: p.ID, Probe: true}); r.StatusCode != http.StatusAccepted {
+		t.Fatalf("empty probe: %d", r.StatusCode)
+	}
+	sc, _ := h.st.Get(ctx, p.ID)
+	if sc.Status != store.StatusFailed || !strings.Contains(sc.Error, "did not answer") {
+		t.Errorf("probe status: %+v", sc)
+	}
+	// A full-scan result can't be passed off as a probe, or vice versa:
+	// the job's trigger decides.
+	full, _, _ := h.st.Enqueue(ctx, "manual", time.Now())
+	h.st.Claim(ctx, time.Now())
+	if r := h.postJSON(t, "/agent/v1/result", obs.Result{JobID: full.ID, Probe: true}); r.StatusCode != http.StatusAccepted {
+		t.Errorf("empty full scan flagged as probe: %d", r.StatusCode)
+	}
+	if sc, _ := h.st.Get(ctx, full.ID); !strings.Contains(sc.Error, "no hosts") {
+		t.Errorf("full scan handled as probe: %+v", sc)
+	}
+}
+
+func TestSightingsLimits(t *testing.T) {
+	h := newHarness(t, nil)
+	many := make([]obs.Sighting, maxSightings+1)
+	if r := h.postJSON(t, "/agent/v1/sightings", obs.Sightings{Sightings: many}); r.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized batch: %d", r.StatusCode)
+	}
+	if r := h.agentDo(t, "POST", "/agent/v1/sightings", testToken, strings.NewReader("{"), false); r.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad JSON: %d", r.StatusCode)
+	}
+	if r := h.agentDo(t, "POST", "/agent/v1/sightings", "nope", strings.NewReader("{}"), false); r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("bad token: %d", r.StatusCode)
+	}
 }

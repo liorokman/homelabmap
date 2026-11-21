@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // database/sql driver "sqlite"
@@ -27,6 +28,10 @@ const (
 	StatusDone    = "done"
 	StatusFailed  = "failed"
 )
+
+// TriggerProbe marks a quick scan of newly heard devices. Probes never
+// hold up or replace the regular full scans.
+const TriggerProbe = "probe"
 
 var ErrNotFound = errors.New("not found")
 
@@ -45,6 +50,8 @@ type Scan struct {
 	Error       string     `json:"error,omitempty"`
 	Nodes       int        `json:"nodes"`
 	Edges       int        `json:"edges"`
+	// Targets are a probe's devices.
+	Targets []obs.ProbeTarget `json:"targets,omitempty"`
 }
 
 var migrations = []string{
@@ -88,6 +95,21 @@ var migrations = []string{
 		verifier   TEXT    NOT NULL,
 		return_to  TEXT    NOT NULL,
 		expires_at INTEGER NOT NULL
+	);`,
+	// 2: passive listening and probes.
+	`ALTER TABLE scans ADD COLUMN targets TEXT NOT NULL DEFAULT '';
+	CREATE TABLE sightings (
+		mac        TEXT    NOT NULL,
+		ip         TEXT    NOT NULL,
+		via        TEXT    NOT NULL,
+		first_seen INTEGER NOT NULL,
+		last_seen  INTEGER NOT NULL,
+		PRIMARY KEY (mac, ip)
+	);
+	CREATE INDEX sightings_last ON sightings(last_seen);
+	CREATE TABLE probes (
+		mac          TEXT PRIMARY KEY,
+		requested_at INTEGER NOT NULL
 	);`,
 }
 
@@ -150,13 +172,15 @@ func fromUnix(n sql.NullInt64) *time.Time {
 	return &t
 }
 
-const scanCols = `id, trigger, status, requested_at, started_at, finished_at, error, node_count, edge_count`
+const scanCols = `id, trigger, status, requested_at, started_at, finished_at, error, node_count, edge_count, targets`
 
-func scanRow(r interface{ Scan(...any) error }) (*Scan, error) {
+func scanRow(r interface{ Scan(...any) error }, extra ...any) (*Scan, error) {
 	var sc Scan
 	var req int64
 	var started, finished sql.NullInt64
-	if err := r.Scan(&sc.ID, &sc.Trigger, &sc.Status, &req, &started, &finished, &sc.Error, &sc.Nodes, &sc.Edges); err != nil {
+	var targets string
+	dest := append([]any{&sc.ID, &sc.Trigger, &sc.Status, &req, &started, &finished, &sc.Error, &sc.Nodes, &sc.Edges, &targets}, extra...)
+	if err := r.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -164,11 +188,16 @@ func scanRow(r interface{ Scan(...any) error }) (*Scan, error) {
 	}
 	sc.RequestedAt = time.Unix(req, 0).UTC()
 	sc.StartedAt, sc.FinishedAt = fromUnix(started), fromUnix(finished)
+	if targets != "" {
+		if err := json.Unmarshal([]byte(targets), &sc.Targets); err != nil {
+			return nil, fmt.Errorf("scan %d targets: %w", sc.ID, err)
+		}
+	}
 	return &sc, nil
 }
 
-// Enqueue adds a pending scan unless one is already pending or running,
-// in which case that one is returned with created=false.
+// Enqueue adds a pending full scan unless one is already pending or
+// running, in which case that one is returned with created=false.
 func (s *Store) Enqueue(ctx context.Context, trigger string, now time.Time) (sc *Scan, created bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -176,7 +205,8 @@ func (s *Store) Enqueue(ctx context.Context, trigger string, now time.Time) (sc 
 	}
 	defer tx.Rollback()
 	sc, err = scanRow(tx.QueryRowContext(ctx,
-		`SELECT `+scanCols+` FROM scans WHERE status IN (?, ?) ORDER BY id LIMIT 1`, StatusPending, StatusRunning))
+		`SELECT `+scanCols+` FROM scans WHERE status IN (?, ?) AND trigger <> ? ORDER BY id LIMIT 1`,
+		StatusPending, StatusRunning, TriggerProbe))
 	switch {
 	case err == nil:
 		return sc, false, nil
@@ -227,8 +257,23 @@ func gz(b []byte) ([]byte, error) {
 }
 
 // Complete stores a finished scan's raw result and graph. It only accepts
-// results for a scan that is currently running.
+// results for a scan that is currently running. Every MAC on the map
+// counts as seen.
 func (s *Store) Complete(ctx context.Context, id int64, res *obs.Result, g *topo.Graph, now time.Time) error {
+	var seen []string
+	for _, n := range g.Nodes {
+		seen = append(seen, n.MACs...)
+	}
+	return s.complete(ctx, id, res, g, seen, now)
+}
+
+// CompleteProbe stores a probe merged into the latest full scan. Only the
+// probed MACs count as seen: the rest of the map is older news.
+func (s *Store) CompleteProbe(ctx context.Context, id int64, merged *obs.Result, g *topo.Graph, probed []string, now time.Time) error {
+	return s.complete(ctx, id, merged, g, probed, now)
+}
+
+func (s *Store) complete(ctx context.Context, id int64, res *obs.Result, g *topo.Graph, seenMACs []string, now time.Time) error {
 	raw, err := json.Marshal(res)
 	if err != nil {
 		return err
@@ -256,15 +301,13 @@ func (s *Store) Complete(ctx context.Context, id int64, res *obs.Result, g *topo
 	if n, _ := r.RowsAffected(); n != 1 {
 		return fmt.Errorf("scan %d is not running: %w", id, ErrNotFound)
 	}
-	// Remember every MAC on the map, and fresh OS fingerprints.
+	// Remember the MACs seen, and fresh OS fingerprints.
 	seen := unix(res.StartedAt)
-	for _, n := range g.Nodes {
-		for _, m := range n.MACs {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO macs (mac, first_seen, last_seen) VALUES (?, ?, ?)
-				 ON CONFLICT(mac) DO UPDATE SET last_seen = MAX(last_seen, excluded.last_seen)`, m, seen, seen); err != nil {
-				return err
-			}
+	for _, m := range seenMACs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO macs (mac, first_seen, last_seen) VALUES (?, ?, ?)
+			 ON CONFLICT(mac) DO UPDATE SET last_seen = MAX(last_seen, excluded.last_seen)`, m, seen, seen); err != nil {
+			return err
 		}
 	}
 	for _, o := range res.OSScans {
@@ -289,16 +332,22 @@ func (s *Store) Fail(ctx context.Context, id int64, msg string, now time.Time) e
 	return err
 }
 
-// Active returns the pending or running scan, if any.
+// Active returns the pending or running full scan, if any.
 func (s *Store) Active(ctx context.Context) (*Scan, error) {
 	return scanRow(s.db.QueryRowContext(ctx,
-		`SELECT `+scanCols+` FROM scans WHERE status IN (?, ?) ORDER BY id LIMIT 1`, StatusPending, StatusRunning))
+		`SELECT `+scanCols+` FROM scans WHERE status IN (?, ?) AND trigger <> ? ORDER BY id LIMIT 1`,
+		StatusPending, StatusRunning, TriggerProbe))
 }
 
-// LastRequested is when the most recent scan was requested (zero if none).
+// Get returns one scan.
+func (s *Store) Get(ctx context.Context, id int64) (*Scan, error) {
+	return scanRow(s.db.QueryRowContext(ctx, `SELECT `+scanCols+` FROM scans WHERE id = ?`, id))
+}
+
+// LastRequested is when the most recent full scan was requested (zero if none).
 func (s *Store) LastRequested(ctx context.Context) (time.Time, error) {
 	var t sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(requested_at) FROM scans`).Scan(&t); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(requested_at) FROM scans WHERE trigger <> ?`, TriggerProbe).Scan(&t); err != nil {
 		return time.Time{}, err
 	}
 	if !t.Valid {
@@ -329,19 +378,12 @@ func (s *Store) Recent(ctx context.Context, limit int) ([]Scan, error) {
 func (s *Store) LatestGraph(ctx context.Context) (*Scan, []byte, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+scanCols+`, graph_json FROM scans
 		WHERE status = ? AND graph_json IS NOT NULL ORDER BY id DESC LIMIT 1`, StatusDone)
-	var sc Scan
-	var req int64
-	var started, finished sql.NullInt64
 	var gj string
-	if err := row.Scan(&sc.ID, &sc.Trigger, &sc.Status, &req, &started, &finished, &sc.Error, &sc.Nodes, &sc.Edges, &gj); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, ErrNotFound
-		}
+	sc, err := scanRow(row, &gj)
+	if err != nil {
 		return nil, nil, err
 	}
-	sc.RequestedAt = time.Unix(req, 0).UTC()
-	sc.StartedAt, sc.FinishedAt = fromUnix(started), fromUnix(finished)
-	return &sc, []byte(gj), nil
+	return sc, []byte(gj), nil
 }
 
 // Result loads a scan's raw observations.
@@ -400,7 +442,8 @@ func (s *Store) UpdateGraph(ctx context.Context, id int64, g *topo.Graph) error 
 
 // History is the per-MAC memory the inference uses.
 func (s *Store) History(ctx context.Context) (topo.History, error) {
-	h := topo.History{OSScans: map[string]obs.OSScan{}, FirstSeen: map[string]time.Time{}}
+	h := topo.History{OSScans: map[string]obs.OSScan{}, FirstSeen: map[string]time.Time{},
+		LastSeen: map[string]time.Time{}, IPv6: map[string][]string{}}
 	rows, err := s.db.QueryContext(ctx, `SELECT data FROM os_scans`)
 	if err != nil {
 		return h, err
@@ -421,18 +464,42 @@ func (s *Store) History(ctx context.Context) (topo.History, error) {
 		return h, err
 	}
 
-	rows, err = s.db.QueryContext(ctx, `SELECT mac, first_seen FROM macs`)
+	rows, err = s.db.QueryContext(ctx, `SELECT mac, first_seen, last_seen FROM macs`)
 	if err != nil {
 		return h, err
 	}
 	for rows.Next() {
 		var m string
-		var t int64
-		if err := rows.Scan(&m, &t); err != nil {
+		var first, last int64
+		if err := rows.Scan(&m, &first, &last); err != nil {
 			rows.Close()
 			return h, err
 		}
-		h.FirstSeen[m] = time.Unix(t, 0).UTC()
+		h.FirstSeen[m] = time.Unix(first, 0).UTC()
+		h.LastSeen[m] = time.Unix(last, 0).UTC()
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return h, err
+	}
+
+	rows, err = s.db.QueryContext(ctx, `SELECT mac, ip, last_seen FROM sightings ORDER BY mac, last_seen DESC`)
+	if err != nil {
+		return h, err
+	}
+	for rows.Next() {
+		var m, ip string
+		var last int64
+		if err := rows.Scan(&m, &ip, &last); err != nil {
+			rows.Close()
+			return h, err
+		}
+		if t := time.Unix(last, 0).UTC(); t.After(h.LastSeen[m]) {
+			h.LastSeen[m] = t
+		}
+		if strings.Contains(ip, ":") {
+			h.IPv6[m] = append(h.IPv6[m], ip)
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -492,6 +559,12 @@ func (s *Store) Prune(ctx context.Context, cutoff, now time.Time) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM scans WHERE requested_at < ? AND status IN (?, ?)
 		AND id <> COALESCE((SELECT MAX(id) FROM scans WHERE status = ?), 0)`,
 		unix(cutoff), StatusDone, StatusFailed, StatusDone); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sightings WHERE last_seen < ?`, unix(cutoff)); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM probes WHERE requested_at < ?`, unix(cutoff)); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ?`, unix(now)); err != nil {

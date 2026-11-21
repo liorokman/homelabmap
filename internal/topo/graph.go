@@ -11,7 +11,7 @@ import (
 )
 
 // Version changes whenever inference changes, so stored graphs get rebuilt.
-const Version = 2
+const Version = 3
 
 // Roles. Infra roles are drawn as network gear.
 const (
@@ -62,6 +62,7 @@ type Node struct {
 	OS         string    `json:"os,omitempty"`
 	OSSource   string    `json:"osSource,omitempty"`
 	IPs        []string  `json:"ips,omitempty"`
+	IPv6       []string  `json:"ipv6,omitempty"` // heard via neighbour discovery
 	MACs       []string  `json:"macs,omitempty"`
 	DNS        []string  `json:"dns,omitempty"`
 	Vendor     string    `json:"vendor,omitempty"`
@@ -74,6 +75,7 @@ type Node struct {
 	OpenPorts  []string  `json:"openPorts,omitempty"`
 	Sources    []string  `json:"sources"`
 	FirstSeen  time.Time `json:"firstSeen,omitzero"`
+	LastSeen   time.Time `json:"lastSeen,omitzero"`
 	New        bool      `json:"new,omitempty"`
 	Depth      int       `json:"depth"`
 }
@@ -97,6 +99,10 @@ type History struct {
 	// Since is when the first scan was stored; nothing is "new" before
 	// a day of history exists.
 	Since time.Time
+	// LastSeen per MAC, from scans and the passive listener.
+	LastSeen map[string]time.Time
+	// IPv6 addresses heard per MAC.
+	IPv6 map[string][]string
 }
 
 func isInfraRole(r string) bool { return r == RoleRouter || r == RoleSwitch || r == RoleAP }

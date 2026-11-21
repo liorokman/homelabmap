@@ -22,6 +22,29 @@ type Job struct {
 	KnownMACs []string `json:"knownMacs,omitempty"`
 	// OSScanMax caps the number of hosts fingerprinted in one job.
 	OSScanMax int `json:"osScanMax,omitempty"`
+	// Probe, when set, asks for a quick look at just these devices instead
+	// of a full scan (new MACs heard by the passive listener).
+	Probe []ProbeTarget `json:"probe,omitempty"`
+}
+
+// ProbeTarget is one newly heard device.
+type ProbeTarget struct {
+	MAC string   `json:"mac"`
+	IPs []string `json:"ips"`
+}
+
+// Sighting is one MAC/IP pair heard passively (ARP or IPv6 neighbour
+// discovery). The scanner forwards these as they happen.
+type Sighting struct {
+	MAC string    `json:"mac"`
+	IP  string    `json:"ip"`
+	Via string    `json:"via"` // "arp" | "ndp"
+	At  time.Time `json:"at"`
+}
+
+// Sightings is the body of POST /agent/v1/sightings.
+type Sightings struct {
+	Sightings []Sighting `json:"sightings"`
 }
 
 // Result is posted by the scanner when a job is finished.
@@ -41,6 +64,9 @@ type Result struct {
 	DNS     map[string]string `json:"dns,omitempty"` // IP -> PTR name
 	// Errors are non-fatal collector problems, shown in the UI.
 	Errors []string `json:"errors,omitempty"`
+	// Probe marks a probe result: it covers only Job.Probe's devices and
+	// is merged into the latest full scan by the frontend.
+	Probe bool `json:"probe,omitempty"`
 }
 
 // Self describes the scanner host, which nmap cannot see a MAC for.
