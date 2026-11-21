@@ -13,6 +13,7 @@ type uniDev struct {
 	UplinkMAC, UplinkID                     string
 	UplinkRemotePort, LocalPort             int
 	UplinkWireless                          bool
+	Offline                                 bool
 }
 
 // uniClient is a UniFi client normalised from either API flavour.
@@ -50,6 +51,8 @@ type rawUniDev struct {
 	IPAddress       string          `json:"ipAddress"`
 	FirmwareVersion string          `json:"firmwareVersion"`
 	Features        json.RawMessage `json:"features"`
+	// classic: int (0 = disconnected); integration: "ONLINE", "OFFLINE", ...
+	State json.RawMessage `json:"state"`
 }
 
 type rawUniClient struct {
@@ -89,6 +92,7 @@ func parseUniFi(u *obs.UniFi) ([]uniDev, []uniClient) {
 			Model:   r.Model,
 			Type:    r.Type,
 			Version: first(r.Version, r.FirmwareVersion),
+			Offline: uniOffline(r.State),
 		}
 		if r.Uplink != nil {
 			d.UplinkMAC = obs.NormMAC(r.Uplink.UplinkMAC)
@@ -174,4 +178,21 @@ func first(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// uniOffline reads a device state from either API flavour. Anything other
+// than an explicit "disconnected" (upgrading, provisioning, ...) is on.
+func uniOffline(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" { // null would decode as 0
+		return false
+	}
+	var n int
+	if json.Unmarshal(raw, &n) == nil {
+		return n == 0
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.EqualFold(s, "offline") || strings.EqualFold(s, "disconnected")
+	}
+	return false
 }

@@ -79,6 +79,10 @@ function iconURI(key, color) {
 }
 
 function nodeColors(n) {
+  if (n.power === 'off') {
+    const c = cssVar('--off');
+    return { col: c, img: iconURI(n.icon, n.infra ? '#ffffff' : c) };
+  }
   if (n.infra) {
     return { col: cssVar(ROLE_COLOR[n.role] || '--node-switch'), img: iconURI(n.icon, '#ffffff') };
   }
@@ -94,7 +98,7 @@ const state = {
   scanId: null,
   status: null,
   layout: store.get('layout', 'fcose'),
-  filters: store.get('filters', { edge: true, virtual: true, unknown: true, ports: false }),
+  filters: { off: true, ...store.get('filters', { edge: true, virtual: true, unknown: true, ports: false }) },
   pollTimer: null,
 };
 
@@ -140,7 +144,12 @@ function buildStyle() {
       },
     },
     { selector: 'node.gateway', style: { width: 56, height: 56 } },
-    { selector: 'node.virtual', style: { width: 24, height: 24, 'border-style': 'dashed', 'font-size': 10 } },
+    // VMs are rounded squares, containers hexagons; both dashed (virtual).
+    { selector: 'node.virtual', style: { width: 26, height: 26, 'border-style': 'dashed', 'font-size': 10 } },
+    { selector: 'node.vm', style: { shape: 'round-rectangle' } },
+    { selector: 'node.container', style: { shape: 'hexagon', width: 30, height: 27 } },
+    // Powered off: grey (see nodeColors), see-through, muted label.
+    { selector: 'node.off', style: { opacity: 0.55, color: c('--muted'), 'font-style': 'italic' } },
     { selector: 'node.unknownloc', style: { opacity: 0.8 } },
     {
       selector: 'node.new',
@@ -173,6 +182,7 @@ function buildStyle() {
         'min-zoomed-font-size': 8,
       },
     },
+    { selector: 'edge.off', style: { opacity: 0.35 } },
     { selector: '.faded', style: { opacity: 0.12 } },
     { selector: 'node.match', style: { 'border-width': 4, 'border-color': c('--accent') } },
     { selector: 'node:selected', style: { 'overlay-color': c('--accent'), 'overlay-opacity': 0.18, 'overlay-padding': 7 } },
@@ -188,14 +198,18 @@ function toElements(graph) {
     if (n.role === 'vm' || n.role === 'container') cls.push('virtual');
     if (n.connection === 'unknown') cls.push('unknownloc');
     if (n.new) cls.push('new');
+    if (n.power === 'off') cls.push('off');
     if (n.location === 'gateway') cls.push('gateway');
     // Cytoscape reads data.parent as a compound parent and would draw the
     // hypervisor as a box around its guests; keep it under another name.
     const { parent, ...rest } = n;
     els.push({ group: 'nodes', data: { ...rest, host: parent, ...nodeColors(n) }, classes: cls.join(' ') });
   }
+  const off = new Set((graph.nodes || []).filter((n) => n.power === 'off').map((n) => n.id));
   for (const e of graph.edges || []) {
-    els.push({ group: 'edges', data: { ...e }, classes: e.kind });
+    const cls = [e.kind];
+    if (off.has(e.source) || off.has(e.target)) cls.push('off');
+    els.push({ group: 'edges', data: { ...e }, classes: cls.join(' ') });
   }
   return els;
 }
@@ -412,7 +426,8 @@ function applyFilters() {
     cy.nodes().forEach((n) => {
       const d = n.data();
       const virtual = d.role === 'vm' || d.role === 'container';
-      const hide = (!f.edge && !d.infra) || (!f.virtual && virtual) || (!f.unknown && d.connection === 'unknown');
+      const hide = (!f.edge && !d.infra) || (!f.virtual && virtual) || (!f.unknown && d.connection === 'unknown') ||
+        (f.off === false && d.power === 'off');
       n.toggleClass('hidden', hide);
     });
     cy.edges().toggleClass('ports', f.ports);
@@ -450,6 +465,12 @@ function nodeHeader(d, tag = 'h3') {
   return `<${tag}>${esc(d.label)} <span class="tag">${esc(role)}</span>${d.new ? '<span class="tag new">new</span>' : ''}</${tag}>`;
 }
 
+function powerLine(d) {
+  if (!d.power) return '';
+  const word = d.power === 'on' ? 'On' : 'Off';
+  return d.powerState && d.powerState !== 'online' ? `${word} (${d.powerState})` : word;
+}
+
 function osLine(d) {
   if (!d.os) return 'unknown';
   return d.os;
@@ -464,6 +485,7 @@ function showTooltip(el) {
       row('MAC', d.macs?.length ? d.macs[0] + (d.macs.length > 1 ? ` (+${d.macs.length - 1})` : '') : '—', 'mono') +
       row('DNS', d.dns?.length ? d.dns : '—') +
       row('OS', osLine(d)) +
+      row('Power', powerLine(d), d.power === 'off' ? 'off' : '') +
       row('Vendor', d.vendor) +
       row('Where', d.location) +
       '</dl>';
@@ -509,6 +531,7 @@ function showDetails(node) {
     row('DNS', d.dns) +
     row('OS', osLine(d)) +
     (d.osSource ? row('OS from', d.osSource) : '') +
+    row('Power', powerLine(d), d.power === 'off' ? 'off' : '') +
     row('Vendor', d.vendor) +
     row('Model', d.model) +
     row('Where', d.location) +
@@ -535,12 +558,24 @@ function renderLegend() {
     const c = cssVar(OS_COLOR[icon]);
     return `<div class="item"><span class="sw edge" style="border-color:${c}"><img alt="" src="${iconURI(icon, c)}"></span>${label}</div>`;
   };
+  const shape = (kind, label) => {
+    const c = cssVar(kind === 'off' ? '--off' : '--os-linux');
+    const body = kind === 'container'
+      ? '<polygon points="12,2 21,7 21,17 12,22 3,17 3,7"/>'
+      : kind === 'vm'
+        ? '<rect x="3" y="3" width="18" height="18" rx="5"/>'
+        : '<circle cx="12" cy="12" r="9"/>';
+    const dash = kind === 'off' ? '' : ' stroke-dasharray="3 2"';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${cssVar('--node-surface')}" stroke="${c}" stroke-width="2"${dash}>${body}</svg>`;
+    return `<div class="item"><span class="sw shape${kind === 'off' ? ' off' : ''}"><img alt="" src="data:image/svg+xml;utf8,${encodeURIComponent(svg)}"></span>${label}</div>`;
+  };
   const line = (cls, label) => `<div class="item full"><span class="line ${cls}"></span>${label}</div>`;
   $('#legend').innerHTML =
     infra('router', 'Router') + infra('switch', 'Switch') + infra('ap', 'Access point') +
     os('proxmox', 'Proxmox') + os('linux', 'Linux') + os('windows', 'Windows') + os('apple', 'Apple') +
     os('android', 'Android') + os('printer', 'Printer') + os('media', 'TV / media') + os('iot', 'IoT') +
     os('phone', 'Phone (private MAC)') + os('unknown', 'Unknown') +
+    shape('vm', 'VM') + shape('container', 'Container') + shape('off', 'Powered off') +
     line('infra', 'Cable between network devices') + line('', 'Cable to a device') + line('wireless', 'Wi-Fi') +
     line('virtual', 'VM / container on host') + line('guess', 'Inferred or unknown location');
 }
@@ -572,7 +607,7 @@ function bindControls() {
     showDetails(n);
   });
 
-  for (const [id, key] of [['#f-edge', 'edge'], ['#f-virtual', 'virtual'], ['#f-unknown', 'unknown'], ['#f-ports', 'ports']]) {
+  for (const [id, key] of [['#f-edge', 'edge'], ['#f-virtual', 'virtual'], ['#f-unknown', 'unknown'], ['#f-off', 'off'], ['#f-ports', 'ports']]) {
     const box = $(id);
     box.checked = state.filters[key];
     box.addEventListener('change', () => {

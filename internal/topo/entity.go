@@ -67,6 +67,31 @@ func (e *entity) isPVEHost() bool {
 	return false
 }
 
+// power says whether the device is on and how that was learned. Explicit
+// reports (PVE, UniFi) win over "it answered this scan".
+func (e *entity) power() (state, detail string) {
+	switch {
+	case e.guest != nil && e.guest.Status != "":
+		if e.guest.Status == "running" {
+			return PowerOn, e.guest.Status
+		}
+		return PowerOff, e.guest.Status
+	case e.pveNode != nil && e.pveNode.Status != "":
+		if e.pveNode.Status == "online" {
+			return PowerOn, e.pveNode.Status
+		}
+		return PowerOff, e.pveNode.Status
+	case e.udev != nil:
+		if e.udev.Offline {
+			return PowerOff, "disconnected"
+		}
+		return PowerOn, ""
+	case e.self || len(e.sweep) > 0 || len(e.snmp) > 0 || e.ucli != nil:
+		return PowerOn, ""
+	}
+	return "", ""
+}
+
 func (e *entity) addSource(s string) { e.sources[s] = true }
 
 // sortedMACs gives deterministic iteration over the entity's MACs.

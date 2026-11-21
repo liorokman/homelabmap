@@ -403,6 +403,7 @@ func (b *builder) node(e *entity, gw *entity) Node {
 	if e.parent != nil {
 		n.Parent = e.parent.nodeID
 	}
+	n.Power, n.PowerState = e.power()
 	for _, m := range e.sortedMACs() {
 		if s, ok := b.osScans[m]; ok && len(s.OpenPorts) > 0 {
 			n.OpenPorts = s.OpenPorts

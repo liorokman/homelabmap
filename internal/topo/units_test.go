@@ -187,3 +187,60 @@ func TestNoSelfNoGhostNode(t *testing.T) {
 		t.Errorf("want exactly the swept host, got %+v", g.Nodes)
 	}
 }
+
+func TestUniOffline(t *testing.T) {
+	for raw, want := range map[string]bool{
+		`1`: false, `0`: true, `4`: false, // classic: connected, disconnected, upgrading
+		`"ONLINE"`: false, `"OFFLINE"`: true, `"PENDING_ADOPTION"`: false, // integration
+		``: false, `null`: false,
+	} {
+		if got := uniOffline(json.RawMessage(raw)); got != want {
+			t.Errorf("uniOffline(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
+
+func TestPower(t *testing.T) {
+	res := &obs.Result{
+		Sweep: []obs.SweepHost{
+			{IP: "10.0.0.2", MAC: "02:00:00:00:00:02"}, // hv1
+			{IP: "10.0.0.10", MAC: "bc:24:11:00:00:10"},
+			{IP: "10.0.0.20", MAC: "00:11:22:33:44:55"},
+		},
+		PVE: &obs.PVE{Nodes: []obs.PVENode{{Name: "hv1", IP: "10.0.0.2", Status: "online", Guests: []obs.PVEGuest{
+			{VMID: 100, Name: "up", Type: "qemu", Status: "running", NICs: []obs.PVENIC{{Name: "net0", MAC: "bc:24:11:00:00:10", Bridge: "vmbr0"}}, IPs: []string{"10.0.0.10"}},
+			{VMID: 101, Name: "down", Type: "lxc", Status: "stopped", NICs: []obs.PVENIC{{Name: "eth0", MAC: "bc:24:11:00:00:11", Bridge: "vmbr0"}}},
+			{VMID: 102, Name: "sleepy", Type: "qemu", Status: "paused", NICs: []obs.PVENIC{{Name: "net0", MAC: "bc:24:11:00:00:12", Bridge: "vmbr0"}}},
+		}}}},
+		SNMP: []obs.SNMPDevice{{IP: "10.0.0.1", SysName: "gw", Forwarding: true,
+			ARP: []obs.ARPEntry{{IP: "10.0.0.30", MAC: "00:aa:bb:cc:dd:ee"}}}},
+	}
+	g := Build(1, res, History{})
+	want := map[string][2]string{
+		"up": {PowerOn, "running"}, "down": {PowerOff, "stopped"}, "sleepy": {PowerOff, "paused"},
+		"hv1": {PowerOn, "online"}, "10.0.0.20": {PowerOn, ""},
+	}
+	got := map[string][2]string{}
+	for _, n := range g.Nodes {
+		got[n.Label] = [2]string{n.Power, n.PowerState}
+	}
+	for label, w := range want {
+		if got[label] != w {
+			t.Errorf("%s: power %v, want %v (all: %v)", label, got[label], w, got)
+		}
+	}
+	if p, ok := got["10.0.0.30"]; ok && p[0] != "" {
+		t.Errorf("ARP-only host must have unknown power, got %v", p)
+	}
+}
+
+func TestParseUniFiOfflineDevice(t *testing.T) {
+	u := &obs.UniFi{Flavor: "legacy", Devices: []json.RawMessage{
+		json.RawMessage(`{"mac":"38:25:ad:ca:03:6d","name":"Hallway","type":"uap","state":0}`),
+		json.RawMessage(`{"mac":"38:25:ad:ca:03:c6","name":"Den","type":"uap","state":1}`),
+	}}
+	devs, _ := parseUniFi(u)
+	if len(devs) != 2 || !devs[0].Offline || devs[1].Offline {
+		t.Errorf("offline flags: %+v", devs)
+	}
+}

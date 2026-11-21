@@ -11,7 +11,7 @@ import (
 )
 
 // Version changes whenever inference changes, so stored graphs get rebuilt.
-const Version = 1
+const Version = 2
 
 // Roles. Infra roles are drawn as network gear.
 const (
@@ -34,6 +34,13 @@ const (
 	KindVirtual  = "virtual"  // guest inside a hypervisor
 	KindInferred = "inferred" // location deduced, not reported
 	KindUnknown  = "unknown"  // seen on the network, location unknown
+)
+
+// Power states. Empty means unknown: the device was only seen in another
+// device's tables (ARP, MAC table) and never answered itself.
+const (
+	PowerOn  = "on"
+	PowerOff = "off"
 )
 
 type Graph struct {
@@ -62,6 +69,8 @@ type Node struct {
 	Location   string    `json:"location,omitempty"`
 	Connection string    `json:"connection,omitempty"`
 	Parent     string    `json:"parent,omitempty"`
+	Power      string    `json:"power,omitempty"`      // PowerOn, PowerOff or unknown
+	PowerState string    `json:"powerState,omitempty"` // as reported, e.g. "stopped"
 	OpenPorts  []string  `json:"openPorts,omitempty"`
 	Sources    []string  `json:"sources"`
 	FirstSeen  time.Time `json:"firstSeen,omitzero"`
