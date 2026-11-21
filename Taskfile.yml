@@ -1,0 +1,57 @@
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  REGISTRY: '{{.REGISTRY}}' # from .env
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || date -u +%Y%m%d%H%M
+  TARGETS: web scanner
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  test:
+    desc: Run all unit tests (also run inside the image build)
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  build:
+    desc: Build both binaries into out/
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -o out/ ./cmd/homelabmap-web ./cmd/homelabmap-scanner
+
+  images:
+    desc: "Build both images (VERSION=x.y.z task images)"
+    cmds:
+      - for: { var: TARGETS }
+        cmd: docker build --target {{.ITEM}} --build-arg VERSION={{.VERSION}} -t {{.REGISTRY}}/homelabmap/{{.ITEM}}:{{.VERSION}} .
+
+  push:
+    desc: "Build and push both images with crane (auth from ~/.docker/config.json)"
+    deps: [images]
+    cmds:
+      - mkdir -p out
+      - for: { var: TARGETS }
+        cmd: |
+          docker save -o out/{{.ITEM}}.tar {{.REGISTRY}}/homelabmap/{{.ITEM}}:{{.VERSION}}
+          crane push out/{{.ITEM}}.tar {{.REGISTRY}}/homelabmap/{{.ITEM}}:{{.VERSION}}
+
+  render:
+    desc: Render deploy/cosmos-compose.rendered.json from .env
+    cmds:
+      - python3 deploy/render.py
+
+  clean:
+    desc: Remove build output and the rendered compose file
+    cmds:
+      - rm -rf out deploy/cosmos-compose.rendered.json

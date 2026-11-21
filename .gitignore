@@ -1,0 +1,7 @@
+.env
+out/
+__pycache__/
+.venv/
+deploy/cosmos-compose.rendered.json
+*.db
+*.db-*

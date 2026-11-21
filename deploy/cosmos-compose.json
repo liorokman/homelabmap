@@ -1,0 +1,86 @@
+{
+  "services": {
+    "homelabmap-web": {
+      "image": "<REGISTRY>/homelabmap/web:<HOMELABMAP_VERSION>",
+      "container_name": "homelabmap-web",
+      "restart": "unless-stopped",
+      "environment": [
+        "TZ=<TZ>",
+        "HOMELABMAP_PUBLIC_URL=https://<HOMELABMAP_HOST>",
+        "HOMELABMAP_AGENT_TOKEN=<HOMELABMAP_AGENT_TOKEN>",
+        "HOMELABMAP_OIDC_ISSUER=<HOMELABMAP_OIDC_ISSUER>",
+        "HOMELABMAP_OIDC_CLIENT_ID=<HOMELABMAP_OIDC_CLIENT_ID>",
+        "HOMELABMAP_OIDC_CLIENT_SECRET=<HOMELABMAP_OIDC_CLIENT_SECRET>",
+        "HOMELABMAP_OIDC_ALLOWED_GROUPS=<HOMELABMAP_OIDC_ALLOWED_GROUPS>",
+        "HOMELABMAP_SCAN_INTERVAL=1h"
+      ],
+      "ports": [
+        "127.0.0.1:8097:8081"
+      ],
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "homelabmap-data",
+          "target": "/data"
+        }
+      ],
+      "cap_drop": ["ALL"],
+      "labels": {
+        "cosmos-stack": "homelabmap",
+        "cosmos-stack-main": "homelabmap-web",
+        "cosmos-force-network-secured": "true",
+        "cosmos-auto-update": "false"
+      },
+      "routes": [
+        {
+          "Name": "homelabmap",
+          "Description": "homelabmap network topology map (OIDC login in the app)",
+          "UseHost": true,
+          "Host": "<HOMELABMAP_HOST>",
+          "UsePathPrefix": false,
+          "Target": "http://homelabmap-web:8080",
+          "Mode": "SERVAPP",
+          "AuthEnabled": false,
+          "AdminOnly": false,
+          "WhitelistInboundIPs": [
+            "<HOMELABMAP_LAN_CIDR>"
+          ],
+          "SmartShield": {
+            "Enabled": false
+          },
+          "BlockCommonBots": false,
+          "BlockAPIAbuse": false,
+          "Timeout": 0
+        }
+      ]
+    },
+    "homelabmap-scanner": {
+      "image": "<REGISTRY>/homelabmap/scanner:<HOMELABMAP_VERSION>",
+      "container_name": "homelabmap-scanner",
+      "restart": "unless-stopped",
+      "network_mode": "host",
+      "cap_drop": ["ALL"],
+      "cap_add": ["NET_RAW", "NET_ADMIN"],
+      "environment": [
+        "TZ=<TZ>",
+        "HOMELABMAP_SERVER=http://127.0.0.1:8097",
+        "HOMELABMAP_AGENT_TOKEN=<HOMELABMAP_AGENT_TOKEN>",
+        "HOMELABMAP_SUBNETS=<HOMELABMAP_SUBNETS>",
+        "HOMELABMAP_SNMP_VERSION=2c",
+        "HOMELABMAP_SNMP_COMMUNITY=<SNMP_RO_COMMUNITY>",
+        "HOMELABMAP_UNIFI_URL=<HOMELABMAP_UNIFI_URL>",
+        "HOMELABMAP_UNIFI_API_KEY=<HOMELABMAP_UNIFI_API_KEY>",
+        "HOMELABMAP_UNIFI_INSECURE_TLS=<HOMELABMAP_UNIFI_INSECURE_TLS>",
+        "HOMELABMAP_PVE_URL=<HOMELABMAP_PVE_URL>",
+        "HOMELABMAP_PVE_TOKEN_ID=<HOMELABMAP_PVE_TOKEN_ID>",
+        "HOMELABMAP_PVE_TOKEN_SECRET=<HOMELABMAP_PVE_TOKEN_SECRET>",
+        "HOMELABMAP_PVE_INSECURE_TLS=<HOMELABMAP_PVE_INSECURE_TLS>"
+      ],
+      "labels": {
+        "cosmos-stack": "homelabmap",
+        "cosmos-stack-main": "homelabmap-web",
+        "cosmos-auto-update": "false"
+      }
+    }
+  }
+}

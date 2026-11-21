@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>homelabmap</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='5' r='2.5'/%3E%3Ccircle cx='5' cy='19' r='2.5'/%3E%3Ccircle cx='19' cy='19' r='2.5'/%3E%3Cpath d='M12 7.5v4M12 11.5l-5.5 5.5M12 11.5l5.5 5.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+<script src="vendor/cytoscape.min.js" defer></script>
+<script src="vendor/layout-base.js" defer></script>
+<script src="vendor/cose-base.js" defer></script>
+<script src="vendor/cytoscape-fcose.js" defer></script>
+<script src="app.js" type="module"></script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5l-5.5 5.5M12 11.5l5.5 5.5"/></svg>
+    <span>homelabmap</span>
+  </div>
+  <div class="status" id="status" aria-live="polite">Loading…</div>
+  <div class="bar-actions">
+    <button id="scan-now" class="btn primary" type="button">Scan now</button>
+    <span class="user" id="user"></span>
+    <form method="post" action="/auth/logout" class="inline"><button class="btn ghost" type="submit">Sign out</button></form>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="controls" aria-label="Map controls">
+    <label class="search">
+      <span class="sr-only">Search devices</span>
+      <input id="search" type="search" placeholder="Search name, IP, MAC, OS…  ( / )" autocomplete="off">
+    </label>
+
+    <fieldset>
+      <legend>Show</legend>
+      <label><input type="checkbox" id="f-edge" checked> End devices</label>
+      <label><input type="checkbox" id="f-virtual" checked> VMs &amp; containers</label>
+      <label><input type="checkbox" id="f-unknown" checked> Devices with unknown location</label>
+      <label><input type="checkbox" id="f-ports"> Port labels on links</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Layout</legend>
+      <div class="seg" role="radiogroup" aria-label="Layout">
+        <button type="button" data-layout="fcose" aria-pressed="true">Organic</button>
+        <button type="button" data-layout="tree" aria-pressed="false">Tree</button>
+        <button type="button" data-layout="radial" aria-pressed="false">Radial</button>
+      </div>
+      <div class="row">
+        <button type="button" class="btn" id="fit">Fit</button>
+        <button type="button" class="btn" id="relayout" title="Forget dragged positions and lay out again">Reset positions</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Legend</legend>
+      <div id="legend" class="legend"></div>
+    </fieldset>
+
+    <details id="warnings" class="warnings" hidden>
+      <summary></summary>
+      <ul></ul>
+    </details>
+  </aside>
+
+  <main class="map-wrap">
+    <div id="map" class="map" role="img" aria-label="Network topology map"></div>
+    <div id="empty" class="empty" hidden></div>
+    <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+  </main>
+
+  <aside id="details" class="details" aria-label="Device details" hidden>
+    <button type="button" class="close" id="details-close" aria-label="Close details">×</button>
+    <div id="details-body"></div>
+  </aside>
+</div>
+</body>
+</html>

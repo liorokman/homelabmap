@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+out/
+*.db
+*.db-*
+deploy/cosmos-compose.rendered.json
+.git
