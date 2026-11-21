@@ -146,7 +146,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "creating login flow", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure via cookieSecure(): off only in loopback dev mode
 		Name: loginCookie, Value: id, Path: "/auth/", MaxAge: int(loginTTL.Seconds()),
 		HttpOnly: true, Secure: s.cookieSecure(), SameSite: http.SameSiteLaxMode,
 	})
@@ -165,6 +165,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		fail("missing login cookie", err)
 		return
 	}
+	//nolint:gosec // Secure via cookieSecure(): off only in loopback dev mode
 	http.SetCookie(w, &http.Cookie{Name: loginCookie, Path: "/auth/", MaxAge: -1, HttpOnly: true, Secure: s.cookieSecure(), SameSite: http.SameSiteLaxMode})
 	flow, err := s.store.TakeLoginFlow(ctx, hashToken(c.Value), s.now())
 	if err != nil {
@@ -232,12 +233,12 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "creating session", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec // Secure via cookieSecure(): off only in loopback dev mode
 		Name: s.sessionCookieName(), Value: sid, Path: "/", Expires: exp,
 		HttpOnly: true, Secure: s.cookieSecure(), SameSite: http.SameSiteLaxMode,
 	})
 	s.log.Info("login", "subject", idt.Subject, "name", name)
-	http.Redirect(w, r, flow.ReturnTo, http.StatusFound)
+	http.Redirect(w, r, flow.ReturnTo, http.StatusFound) //nolint:gosec // ReturnTo passed safeReturn: a local path
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -248,6 +249,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(s.sessionCookieName()); err == nil {
 		_ = s.store.DeleteSession(r.Context(), hashToken(c.Value))
 	}
+	//nolint:gosec // Secure via cookieSecure(): off only in loopback dev mode
 	http.SetCookie(w, &http.Cookie{Name: s.sessionCookieName(), Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: s.cookieSecure(), SameSite: http.SameSiteLaxMode})
 	dest := "/signin?signed-out=1"
@@ -289,14 +291,14 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			return
 		}
 		// Pages: the landing page, which offers the sign-in.
-		http.Redirect(w, r, "/signin?return="+urlQueryEscape(r.URL.RequestURI()), http.StatusFound)
+		http.Redirect(w, r, "/signin?return="+urlQueryEscape(r.URL.RequestURI()), http.StatusFound) //nolint:gosec // fixed local path
 	})
 }
 
 // sessionUser returns the signed-in user, if the request has a session.
 func (s *Server) sessionUser(r *http.Request) (*User, bool, error) {
-	c, err := r.Cookie(s.sessionCookieName())
-	if err != nil {
+	c, _ := r.Cookie(s.sessionCookieName()) // no cookie: not signed in
+	if c == nil {
 		return nil, false, nil
 	}
 	sess, err := s.store.GetSession(r.Context(), hashToken(c.Value), s.now())

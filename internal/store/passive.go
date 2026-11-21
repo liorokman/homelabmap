@@ -29,7 +29,7 @@ func (s *Store) RecordSightings(ctx context.Context, ss []obs.Sighting, now time
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	var macs []string
 	for _, x := range ss {
 		at := x.At
@@ -98,7 +98,7 @@ func (s *Store) EnqueueProbe(ctx context.Context, targets []obs.ProbeTarget, max
 	if err != nil {
 		return nil, nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 
 	var recent int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM probes WHERE requested_at > ?`,

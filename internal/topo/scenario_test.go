@@ -13,40 +13,40 @@ import (
 
 // MACs in the scenario: a small home network.
 const (
-	macGW       = "b8:c4:9c:b0:47:a5"
+	macGW      = "b8:c4:9c:b0:47:a5"
 	macCore    = "74:74:83:44:34:68"
-	macAcc      = "04:31:23:7f:f1:22"
+	macAcc     = "04:31:23:7f:f1:22"
 	macHV      = "d8:3b:42:cb:0a:e6"
 	macHVTap   = "fe:12:34:56:78:9a" // host side of a VM tap: must not join hv1's identity
-	macLite     = "0c:2e:17:e4:27:a0"
-	macHallway  = "38:25:ad:ca:03:6d"
-	macDen   = "84:78:48:86:b4:99"
-	macCosmos   = "bc:24:11:00:00:28"
-	macMon      = "bc:24:11:00:00:10"
-	macMacvlan  = "00:16:3e:00:00:77" // something else on hv1's bridge, unknown to PVE
-	macDesktop  = "00:d8:61:00:00:05" // on core gi5
-	macLaptop   = "00:d8:61:00:00:02" // directly on the gateway's ether2
-	macTV       = "00:04:1f:00:00:03" // behind the Lite 8
-	macPhone    = "da:a1:19:00:00:01" // randomized Wi-Fi MAC on Hallway
-	macTransit  = "00:11:22:99:99:99" // only ever on uplinks: switch-internal noise
+	macLite    = "0c:2e:17:e4:27:a0"
+	macHallway = "38:25:ad:ca:03:6d"
+	macDen     = "84:78:48:86:b4:99"
+	macCosmos  = "bc:24:11:00:00:28"
+	macMon     = "bc:24:11:00:00:10"
+	macMacvlan = "00:16:3e:00:00:77" // something else on hv1's bridge, unknown to PVE
+	macDesktop = "00:d8:61:00:00:05" // on core gi5
+	macLaptop  = "00:d8:61:00:00:02" // directly on the gateway's ether2
+	macTV      = "00:04:1f:00:00:03" // behind the Lite 8
+	macPhone   = "da:a1:19:00:00:01" // randomized Wi-Fi MAC on Hallway
+	macTransit = "00:11:22:99:99:99" // only ever on uplinks: switch-internal noise
 	macHVLACP  = "da:3b:42:cb:0a:e6" // hv1's bond/LACP MAC, FDB-only on hv1's port
-	ipGW        = "10.20.20.1"
+	ipGW       = "10.20.20.1"
 	ipHV       = "10.20.20.98"
 	ipCore     = "10.20.20.195"
-	ipMon       = "10.20.20.112"
-	ipDesktop   = "10.20.22.66"
-	ipLaptop    = "10.20.22.163"
-	ipTV        = "10.20.22.20"
-	ipPhone     = "10.20.22.228"
-	ipHallway   = "10.20.23.29"
-	ipDen    = "10.20.23.66"
-	ipCosmos    = "10.20.23.80"
-	ipAcc       = "10.20.23.94"
-	ipLite      = "10.20.23.191"
-	ipMacvlan   = "10.20.22.7"
+	ipMon      = "10.20.20.112"
+	ipDesktop  = "10.20.22.66"
+	ipLaptop   = "10.20.22.163"
+	ipTV       = "10.20.22.20"
+	ipPhone    = "10.20.22.228"
+	ipHallway  = "10.20.23.29"
+	ipDen      = "10.20.23.66"
+	ipCosmos   = "10.20.23.80"
+	ipAcc      = "10.20.23.94"
+	ipLite     = "10.20.23.191"
+	ipMacvlan  = "10.20.22.7"
 	ifCorePo1  = 1000
 	ifAccLagHV = 66
-	ifAccLagUp  = 67
+	ifAccLagUp = 67
 )
 
 func ifs(names map[int]string, agg map[int]int) []obs.Interface {
@@ -345,13 +345,13 @@ func TestScenarioEdgePlacement(t *testing.T) {
 		}
 	}
 
-	check(macDesktop, macCore, KindWired, "gi5") // access port on the core
+	check(macDesktop, macCore, KindWired, "gi5")  // access port on the core
 	check(macLaptop, macGW, KindWired, "ether2")  // access port on the gateway
-	check(macCosmos, macHV, KindVirtual, "")     // PVE guest, also the scanner host
-	check(macMon, macHV, KindVirtual, "")        // LXC
-	check(macMacvlan, macHV, KindInferred, "")   // on hv1's port, unknown to PVE
+	check(macCosmos, macHV, KindVirtual, "")      // PVE guest, also the scanner host
+	check(macMon, macHV, KindVirtual, "")         // LXC
+	check(macMacvlan, macHV, KindInferred, "")    // on hv1's port, unknown to PVE
 	check(macTV, macLite, KindInferred, "")       // Lite 8 has no MAC table
-	check(macDen, macLite, KindInferred, "")   // AP behind the Lite 8
+	check(macDen, macLite, KindInferred, "")      // AP behind the Lite 8
 	check(macPhone, macHallway, KindInferred, "") // Wi-Fi client, without UniFi data
 
 	if c := v.node(macCosmos); c.Parent != v.node(macHV).ID || c.Location != "VM on hv1" {

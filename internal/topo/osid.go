@@ -173,9 +173,10 @@ func nmapOS(s obs.OSScan) osGuess {
 		g.icon = IconNAS
 	case "phone":
 		g.icon = IconPhone
-		if fam == "ios" {
+		switch fam {
+		case "ios":
 			g.icon = IconApple
-		} else if fam == "android" {
+		case "android":
 			g.icon = IconAndroid
 		}
 	}

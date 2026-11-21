@@ -1,0 +1,30 @@
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - nilerr
+    - unconvert
+  settings:
+    misspell:
+      ignore-rules:
+        - routeros # MikroTik RouterOS, not "routers"
+    gosec:
+      excludes:
+        - G204 # nmap and the listener are run with arguments built in code, never through a shell
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [gosec, errcheck, bodyclose]
+      - path: internal/web/static/
+        linters: [misspell]
+
+formatters:
+  enable:
+    - gofmt

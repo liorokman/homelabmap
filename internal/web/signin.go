@@ -54,7 +54,7 @@ small { display: block; margin-top: 14px; color: var(--muted); font-size: 12.5px
 func (s *Server) handleSignin(w http.ResponseWriter, r *http.Request) {
 	ret := safeReturn(r.URL.Query().Get("return"))
 	if _, ok := s.currentUser(r); ok {
-		http.Redirect(w, r, ret, http.StatusFound)
+		http.Redirect(w, r, ret, http.StatusFound) //nolint:gosec // ret passed safeReturn: a local path
 		return
 	}
 	s.renderSignin(w, ret, false)

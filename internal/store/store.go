@@ -128,7 +128,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	db.SetMaxOpenConns(4)
 	s := &Store{db: db}
 	if err := s.migrate(ctx); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrating %s: %w", path, err)
 	}
 	return s, nil
@@ -147,12 +147,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
 		// PRAGMA can't take parameters; i is an int we control.
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -203,7 +203,7 @@ func (s *Store) Enqueue(ctx context.Context, trigger string, now time.Time) (sc 
 	if err != nil {
 		return nil, false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	sc, err = scanRow(tx.QueryRowContext(ctx,
 		`SELECT `+scanCols+` FROM scans WHERE status IN (?, ?) AND trigger <> ? ORDER BY id LIMIT 1`,
 		StatusPending, StatusRunning, TriggerProbe))
@@ -292,7 +292,7 @@ func (s *Store) complete(ctx context.Context, id int64, res *obs.Result, g *topo
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
 	r, err := tx.ExecContext(ctx,
 		`UPDATE scans SET status = ?, finished_at = ?, result_gz = ?, graph_json = ?, graph_version = ?,
 		 node_count = ?, edge_count = ?, error = ? WHERE id = ? AND status = ?`,
@@ -470,7 +470,7 @@ func (s *Store) History(ctx context.Context) (topo.History, error) {
 	for rows.Next() {
 		var d string
 		if err := rows.Scan(&d); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return h, err
 		}
 		var o obs.OSScan
@@ -478,7 +478,7 @@ func (s *Store) History(ctx context.Context) (topo.History, error) {
 			h.OSScans[o.MAC] = o
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return h, err
 	}
@@ -491,13 +491,13 @@ func (s *Store) History(ctx context.Context) (topo.History, error) {
 		var m string
 		var first, last int64
 		if err := rows.Scan(&m, &first, &last); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return h, err
 		}
 		h.FirstSeen[m] = time.Unix(first, 0).UTC()
 		h.LastSeen[m] = time.Unix(last, 0).UTC()
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return h, err
 	}
@@ -510,7 +510,7 @@ func (s *Store) History(ctx context.Context) (topo.History, error) {
 		var m, ip string
 		var last int64
 		if err := rows.Scan(&m, &ip, &last); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return h, err
 		}
 		if t := time.Unix(last, 0).UTC(); t.After(h.LastSeen[m]) {
@@ -520,7 +520,7 @@ func (s *Store) History(ctx context.Context) (topo.History, error) {
 			h.IPv6[m] = append(h.IPv6[m], ip)
 		}
 	}
-	rows.Close()
+	_ = rows.Close()
 	if err := rows.Err(); err != nil {
 		return h, err
 	}

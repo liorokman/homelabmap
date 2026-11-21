@@ -16,6 +16,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -416,6 +417,7 @@ func TestConfigValidation(t *testing.T) {
 		"HOMELABMAP_OIDC_ISSUER": "https://idp.example/app/", "HOMELABMAP_OIDC_CLIENT_ID": "homelabmap",
 	}
 	set := func(t *testing.T, over map[string]string) {
+		cleanEnv(t)
 		for _, k := range []string{"HOMELABMAP_PUBLIC_URL", "HOMELABMAP_AGENT_TOKEN", "HOMELABMAP_OIDC_ISSUER", "HOMELABMAP_OIDC_CLIENT_ID", "HOMELABMAP_INSECURE_NO_AUTH", "HOMELABMAP_LISTEN", "HOMELABMAP_SCAN_INTERVAL", "HOMELABMAP_PROBE_MAX_PER_HOUR"} {
 			t.Setenv(k, "")
 		}
@@ -632,5 +634,16 @@ func TestLandingPageAndLogout(t *testing.T) {
 	}
 	if resp := h.get(t, "/api/status"); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("session survived logout: %d", resp.StatusCode)
+	}
+}
+
+// cleanEnv empties every HOMELABMAP_ variable for the test (restored after),
+// so a developer's .env can't leak into config tests.
+func cleanEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "HOMELABMAP_") {
+			t.Setenv(k, "")
+		}
 	}
 }

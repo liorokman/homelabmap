@@ -91,6 +91,28 @@ func newSNMP(ctx context.Context, c SNMPConfig, ip string, timeout time.Duration
 	return g
 }
 
+// snmpSession is the part of gosnmp the scanner uses. Tests replace
+// dialSNMP with an in-memory agent.
+type snmpSession interface {
+	Get(oids []string) (*gosnmp.SnmpPacket, error)
+	BulkWalkAll(root string) ([]gosnmp.SnmpPDU, error)
+	WalkAll(root string) ([]gosnmp.SnmpPDU, error)
+	Close() error
+}
+
+type gosnmpSession struct{ *gosnmp.GoSNMP }
+
+func (s gosnmpSession) Close() error { return s.Conn.Close() }
+
+// dialSNMP opens a session to one agent.
+var dialSNMP = func(ctx context.Context, c SNMPConfig, ip string, timeout time.Duration, retries int) (snmpSession, error) {
+	g := newSNMP(ctx, c, ip, timeout, retries)
+	if err := g.Connect(); err != nil {
+		return nil, err
+	}
+	return gosnmpSession{g}, nil
+}
+
 func authProto(s string) gosnmp.SnmpV3AuthProtocol {
 	switch strings.ToUpper(s) {
 	case "MD5":
@@ -172,12 +194,12 @@ func snmpCollect(ctx context.Context, c SNMPConfig, targets []string, errs *errS
 }
 
 func snmpProbe(ctx context.Context, c SNMPConfig, ip string) bool {
-	g := newSNMP(ctx, c, ip, c.Timeout, c.Retries)
-	if err := g.Connect(); err != nil {
+	s, err := dialSNMP(ctx, c, ip, c.Timeout, c.Retries)
+	if err != nil {
 		return false
 	}
-	defer g.Conn.Close()
-	r, err := g.Get([]string{oidSysObjectID})
+	defer func() { _ = s.Close() }()
+	r, err := s.Get([]string{oidSysObjectID})
 	if err != nil || r == nil || len(r.Variables) == 0 {
 		return false
 	}
@@ -186,7 +208,7 @@ func snmpProbe(ctx context.Context, c SNMPConfig, ip string) bool {
 }
 
 type walker struct {
-	g   *gosnmp.GoSNMP
+	g   snmpSession
 	dev *obs.SNMPDevice
 }
 
@@ -218,12 +240,12 @@ func (w *walker) walk(root string) map[string]gosnmp.SnmpPDU {
 
 func snmpWalkDevice(ctx context.Context, c SNMPConfig, ip string) obs.SNMPDevice {
 	dev := obs.SNMPDevice{IP: ip}
-	g := newSNMP(ctx, c, ip, 3*time.Second, 2)
-	if err := g.Connect(); err != nil {
+	g, err := dialSNMP(ctx, c, ip, 3*time.Second, 2)
+	if err != nil {
 		dev.Errors = append(dev.Errors, "connect: "+err.Error())
 		return dev
 	}
-	defer g.Conn.Close()
+	defer func() { _ = g.Close() }()
 	w := &walker{g: g, dev: &dev}
 
 	// Scalars, fetched one by one: a missing object must not hide the others.
@@ -310,7 +332,9 @@ func collectInterfaces(w *walker) {
 	}
 	for idx, p := range w.walk(oidIfHighSpeed) {
 		if i := get(idx); i != nil {
-			i.SpeedMbps = uint(pduInt(p))
+			if v := pduInt(p); v > 0 {
+				i.SpeedMbps = uint(v)
+			}
 		}
 	}
 	for idx, p := range w.walk(oidLagAttached) {
@@ -415,6 +439,7 @@ func collectLLDP(w *walker) {
 	}
 
 	for _, r := range rem {
+		slices.Sort(r.n.MgmtAddrs) // deterministic; well-formed addresses sort before "invalid:"
 		r.n.ChassisSubtype, r.n.PortSubtype = r.chassisT, r.portIDT
 		r.n.ChassisID = formatLLDPID(r.chassisT, r.chassis, true)
 		r.n.PortID = formatLLDPID(r.portIDT, r.portID, false)
@@ -507,8 +532,12 @@ func collectCDP(w *walker) {
 		}
 		r := rows[key]
 		if r == nil {
-			ifIdx, _, _ := strings.Cut(key, ".")
-			n, _ := strconv.Atoi(ifIdx)
+			// Index is ifIndex.deviceIndex.
+			ifIdx, dev, ok := strings.Cut(key, ".")
+			n, err := strconv.Atoi(ifIdx)
+			if !ok || err != nil || dev == "" {
+				continue
+			}
 			r = &row{n: obs.CDPNeighbor{IfIndex: n}}
 			rows[key] = r
 		}
@@ -570,6 +599,7 @@ func collectFDB(w *walker) {
 		}
 	}
 	if len(w.dev.FDB) > 0 {
+		sortFDB(w.dev.FDB)
 		return
 	}
 	// Plain BRIDGE-MIB: index m1..m6
@@ -580,6 +610,17 @@ func collectFDB(w *walker) {
 		}
 		add(macFromOID(strings.Split(idx, ".")), 0, int(pduInt(p)))
 	}
+	sortFDB(w.dev.FDB)
+}
+
+// sortFDB makes walk results deterministic: by port, then MAC.
+func sortFDB(f []obs.FDBEntry) {
+	slices.SortFunc(f, func(a, b obs.FDBEntry) int {
+		if a.IfIndex != b.IfIndex {
+			return a.IfIndex - b.IfIndex
+		}
+		return strings.Compare(a.MAC, b.MAC)
+	})
 }
 
 func collectARP(w *walker) {

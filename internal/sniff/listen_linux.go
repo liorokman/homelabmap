@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"time"
 
@@ -74,13 +75,16 @@ func Listen(ctx context.Context, iface string, emit func(Sighting)) error {
 }
 
 func openPacket(ifindex int, proto uint16, filter []unix.SockFilter, allmulti bool) (int, error) {
+	if ifindex <= 0 || ifindex > math.MaxInt32 || len(filter) > math.MaxUint16 {
+		return -1, fmt.Errorf("interface index %d or filter length %d out of range", ifindex, len(filter))
+	}
 	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW|unix.SOCK_CLOEXEC, int(htons(proto)))
 	if err != nil {
 		return -1, err
 	}
-	fail := func(err error) (int, error) { unix.Close(fd); return -1, err }
+	fail := func(err error) (int, error) { _ = unix.Close(fd); return -1, err }
 	if filter != nil {
-		prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]}
+		prog := unix.SockFprog{Len: uint16(len(filter)), Filter: &filter[0]} //nolint:gosec // range-checked above
 		if err := unix.SetsockoptSockFprog(fd, unix.SOL_SOCKET, unix.SO_ATTACH_FILTER, &prog); err != nil {
 			return fail(fmt.Errorf("attaching filter: %w", err))
 		}
@@ -89,7 +93,7 @@ func openPacket(ifindex int, proto uint16, filter []unix.SockFilter, allmulti bo
 		return fail(err)
 	}
 	if allmulti {
-		mreq := unix.PacketMreq{Ifindex: int32(ifindex), Type: unix.PACKET_MR_ALLMULTI}
+		mreq := unix.PacketMreq{Ifindex: int32(ifindex), Type: unix.PACKET_MR_ALLMULTI} //nolint:gosec // range-checked above
 		if err := unix.SetsockoptPacketMreq(fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mreq); err != nil {
 			return fail(fmt.Errorf("all-multicast: %w", err))
 		}

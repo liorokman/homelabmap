@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -65,6 +66,7 @@ func TestOSScanTargets(t *testing.T) {
 }
 
 func TestLoadConfig(t *testing.T) {
+	cleanEnv(t)
 	t.Run("minimal v2c", func(t *testing.T) {
 		t.Setenv("HOMELABMAP_SUBNETS", "10.20.20.0/22, 10.1.0.7/24")
 		t.Setenv("HOMELABMAP_SNMP_COMMUNITY", "x")
@@ -117,8 +119,8 @@ func TestKeepSighting(t *testing.T) {
 	}{
 		{obs.Sighting{MAC: "3C:7C:3F:00:00:01", IP: "10.20.23.210"}, true},
 		{obs.Sighting{MAC: "aa:bb:cc:00:00:01", IP: "10.20.23.80"}, false}, // the scanner host
-		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "10.1.2.3"}, false},      // other segment
-		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "fe80::1"}, true},        // IPv6 kept
+		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "10.1.2.3"}, false},    // other segment
+		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "fe80::1"}, true},      // IPv6 kept
 		{obs.Sighting{MAC: "01:00:5e:00:00:01", IP: "10.20.23.210"}, false},
 		{obs.Sighting{MAC: "nonsense", IP: "10.20.23.210"}, false},
 		{obs.Sighting{MAC: "3c:7c:3f:00:00:01", IP: "nonsense"}, false},
@@ -161,5 +163,16 @@ func TestProbeIPsAndLanIface(t *testing.T) {
 	}
 	if got := lanIface(cfg, obs.Self{}); got != "" {
 		t.Errorf("lanIface without match = %q", got)
+	}
+}
+
+// cleanEnv empties every HOMELABMAP_ variable for the test (restored after),
+// so a developer's .env can't leak into config tests.
+func cleanEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "HOMELABMAP_") {
+			t.Setenv(k, "")
+		}
 	}
 }

@@ -25,10 +25,10 @@ func TestDescURLAllowed(t *testing.T) {
 	cases := map[string]bool{
 		"http://10.20.22.246:1234/desc.xml":     true,
 		"https://10.20.22.246/desc.xml":         true,
-		"http://10.20.22.89/desc.xml":          false, // another host
-		"http://169.254.169.254/latest/meta":     false,
-		"http://tv.local/desc.xml":               false, // names could resolve anywhere
-		"file:///etc/passwd":                     false,
+		"http://10.20.22.89/desc.xml":           false, // another host
+		"http://169.254.169.254/latest/meta":    false,
+		"http://tv.local/desc.xml":              false, // names could resolve anywhere
+		"file:///etc/passwd":                    false,
 		"http://user:pw@10.20.22.246/desc.xml":  false,
 		"gopher://10.20.22.246/":                false,
 		"http://[::ffff:10.20.22.246]/desc.xml": true, // same address, mapped form

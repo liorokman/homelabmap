@@ -128,5 +128,5 @@ func unicastMAC(b []byte) (string, bool) {
 
 func usable(ip netip.Addr) bool {
 	return ip.IsValid() && !ip.IsUnspecified() && !ip.IsMulticast() && !ip.IsLoopback() &&
-		!(ip.Is4() && ip.IsLinkLocalUnicast()) // 169.254/16: APIPA noise
+		(!ip.Is4() || !ip.IsLinkLocalUnicast()) // 169.254/16: APIPA noise
 }

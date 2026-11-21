@@ -4,6 +4,8 @@ package scanner
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"net"
 
 	"golang.org/x/sys/unix"
@@ -16,6 +18,9 @@ func setMulticastIface(conn net.PacketConn, iface string) error {
 	if err != nil {
 		return err
 	}
+	if ifi.Index <= 0 || ifi.Index > math.MaxInt32 {
+		return fmt.Errorf("interface index %d out of range", ifi.Index)
+	}
 	uc, ok := conn.(*net.UDPConn)
 	if !ok {
 		return errors.New("not a UDP socket")
@@ -26,7 +31,7 @@ func setMulticastIface(conn net.PacketConn, iface string) error {
 	}
 	var serr error
 	err = raw.Control(func(fd uintptr) {
-		serr = unix.SetsockoptIPMreqn(int(fd), unix.IPPROTO_IP, unix.IP_MULTICAST_IF, &unix.IPMreqn{Ifindex: int32(ifi.Index)})
+		serr = unix.SetsockoptIPMreqn(int(fd), unix.IPPROTO_IP, unix.IP_MULTICAST_IF, &unix.IPMreqn{Ifindex: int32(ifi.Index)}) //nolint:gosec // range-checked above
 	})
 	return errors.Join(err, serr)
 }

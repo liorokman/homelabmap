@@ -122,7 +122,11 @@ func ssdpDiscover(ctx context.Context, cfg Config, iface string) ([]obs.SSDPDevi
 // parseSSDPResponse reads the HTTP-over-UDP answer to an M-SEARCH.
 func parseSSDPResponse(b []byte) (http.Header, bool) {
 	resp, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(b)), nil)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
+		return nil, false
+	}
+	_ = resp.Body.Close() // in-memory; nothing to release, but keep linters honest
+	if resp.StatusCode != http.StatusOK {
 		return nil, false
 	}
 	return resp.Header, true

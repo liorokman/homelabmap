@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -72,5 +73,8 @@ func run() error {
 	if cfg.Passive {
 		go agent.Watch(ctx)
 	}
-	return agent.Run(ctx)
+	if err := agent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil // stopped by a signal
 }

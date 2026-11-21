@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -30,17 +29,14 @@ func NewAgent(cfg Config, log *slog.Logger) *Agent {
 	}
 }
 
-// Run blocks until ctx is cancelled.
+// Run blocks until ctx is cancelled, then returns ctx.Err().
 func (a *Agent) Run(ctx context.Context) error {
 	backoff := 2 * time.Second
-	for {
-		if ctx.Err() != nil {
-			return nil
-		}
+	for ctx.Err() == nil {
 		job, err := a.poll(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return ctx.Err()
 			}
 			a.log.Warn("polling frontend failed", "err", err, "retry_in", backoff)
 			sleep(ctx, backoff)
@@ -79,6 +75,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			sleep(ctx, time.Duration(attempt)*5*time.Second)
 		}
 	}
+	return ctx.Err()
 }
 
 func (a *Agent) poll(ctx context.Context) (*obs.Job, error) {
@@ -143,5 +140,3 @@ func sleep(ctx context.Context, d time.Duration) {
 	case <-t.C:
 	}
 }
-
-var errNotConfigured = errors.New("not configured")
