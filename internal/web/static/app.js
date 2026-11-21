@@ -189,7 +189,10 @@ function toElements(graph) {
     if (n.connection === 'unknown') cls.push('unknownloc');
     if (n.new) cls.push('new');
     if (n.location === 'gateway') cls.push('gateway');
-    els.push({ group: 'nodes', data: { ...n, ...nodeColors(n) }, classes: cls.join(' ') });
+    // Cytoscape reads data.parent as a compound parent and would draw the
+    // hypervisor as a box around its guests; keep it under another name.
+    const { parent, ...rest } = n;
+    els.push({ group: 'nodes', data: { ...rest, host: parent, ...nodeColors(n) }, classes: cls.join(' ') });
   }
   for (const e of graph.edges || []) {
     els.push({ group: 'edges', data: { ...e }, classes: e.kind });
