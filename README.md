@@ -12,7 +12,7 @@ Two containers on the Cosmos host, built from one Go module:
 
 | | `homelabmap-scanner` | `homelabmap-web` |
 |---|---|---|
-| Job | Observe: nmap sweep + OS detection, SNMP, UniFi API, PVE API, SSDP/UPnP, reverse DNS, passive ARP/NDP listening | Everything else: schedule, store, infer topology, UI, OIDC login |
+| Job | Observe: nmap sweep + OS detection, SNMP, UniFi API, PVE API, Cosmos API, SSDP/UPnP, reverse DNS, passive ARP/NDP listening | Everything else: schedule, store, infer topology, UI, OIDC login |
 | Network | **host** (needs the LAN segment for ARP) | Cosmos bridge network, behind the Cosmos route |
 | Listens | **nothing** | `:8080` UI (route target), `:8081` agent API (published on host **127.0.0.1:8097** only) |
 | Privileges | non-root; `cap_drop ALL`, `cap_add NET_RAW, NET_ADMIN`; only `nmap` and `homelabmap-listen` (NET_RAW only) carry file caps | non-root, `cap_drop ALL` |
@@ -63,6 +63,22 @@ internal/web         HTTP, OIDC+PKCE, scheduler, agent API, embedded UI
   and named clients from the UniFi controller's 30-day history, stay on the
   map greyed out as "not seen since …" (VMs excepted: PVE lists those), until
   unseen for `HOMELABMAP_FORGET_AFTER` (30 days).
+
+## Cosmos containers
+
+With `HOMELABMAP_COSMOS_URL` and `HOMELABMAP_COSMOS_TOKEN` set, the scanner reads the
+Cosmos API: `servapps` (containers) and, from `config`, only the
+reverse-proxy routes. Containers hang off the device the Cosmos hostname
+resolves to. Stacks (`cosmos-stack` label or compose project) with more than
+one container show as one node; **Open stacks** shows the containers inside
+a box per stack. Route hostnames become links on containers, and on LAN
+devices that Cosmos proxies to by IP. The **Containers** table lists them all.
+
+The token needs only **Resources Read** and **Configuration Read**,
+IP-whitelisted to the Cosmos host. Configuration Read also exposes Cosmos's CA
+and TLS private keys to the token holder (homelabmap discards everything but the
+routes); without it, containers show without links. Never use a token with
+write, user or credential permissions.
 
 ## New devices between scans
 
