@@ -1,0 +1,68 @@
+# homelabmap with plain Docker Compose:
+#   cp .env.example .env   # fill it in
+#   docker compose up -d
+#
+# The UI listens on 127.0.0.1:8080 by default: put it behind an HTTPS
+# reverse proxy (OIDC login needs https in HOMELABMAP_PUBLIC_URL).
+
+x-image: &version ${HOMELABMAP_VERSION:-latest}
+
+services:
+  web:
+    image: ${HOMELABMAP_IMAGE_PREFIX:-ghcr.io/liorokman/homelabmap}-web:${HOMELABMAP_VERSION:-latest}
+    restart: unless-stopped
+    cap_drop: [ALL]
+    read_only: true
+    environment:
+      TZ: ${TZ:-}
+      HOMELABMAP_PUBLIC_URL: ${HOMELABMAP_PUBLIC_URL:?set HOMELABMAP_PUBLIC_URL in .env}
+      HOMELABMAP_AGENT_TOKEN: ${HOMELABMAP_AGENT_TOKEN:?set HOMELABMAP_AGENT_TOKEN in .env (openssl rand -hex 32)}
+      HOMELABMAP_OIDC_ISSUER: ${HOMELABMAP_OIDC_ISSUER:-}
+      HOMELABMAP_OIDC_CLIENT_ID: ${HOMELABMAP_OIDC_CLIENT_ID:-}
+      HOMELABMAP_OIDC_CLIENT_SECRET: ${HOMELABMAP_OIDC_CLIENT_SECRET:-}
+      HOMELABMAP_OIDC_ALLOWED_GROUPS: ${HOMELABMAP_OIDC_ALLOWED_GROUPS:-}
+      HOMELABMAP_OIDC_PROVIDER_NAME: ${HOMELABMAP_OIDC_PROVIDER_NAME:-}
+      HOMELABMAP_DB: ${HOMELABMAP_DB:-}
+    ports:
+      - "${HOMELABMAP_UI_BIND:-127.0.0.1:8080}:8080"
+      # The scanner's API: loopback only. Never expose it to the network.
+      - "127.0.0.1:8097:8081"
+    volumes:
+      - data:/data
+    tmpfs:
+      - /tmp
+
+  scanner:
+    image: ${HOMELABMAP_IMAGE_PREFIX:-ghcr.io/liorokman/homelabmap}-scanner:${HOMELABMAP_VERSION:-latest}
+    restart: unless-stopped
+    # The scanner needs the LAN segment (ARP, neighbour discovery, SSDP)
+    # and raw sockets for nmap and the passive listener. It listens on no port.
+    network_mode: host
+    cap_drop: [ALL]
+    cap_add: [NET_RAW, NET_ADMIN]
+    read_only: true
+    environment:
+      TZ: ${TZ:-}
+      HOMELABMAP_SERVER: http://127.0.0.1:8097
+      HOMELABMAP_AGENT_TOKEN: ${HOMELABMAP_AGENT_TOKEN:?set HOMELABMAP_AGENT_TOKEN in .env}
+      HOMELABMAP_SUBNETS: ${HOMELABMAP_SUBNETS:?set HOMELABMAP_SUBNETS in .env (e.g. 192.168.1.0/24)}
+      HOMELABMAP_SNMP_VERSION: ${HOMELABMAP_SNMP_VERSION:-2c}
+      HOMELABMAP_SNMP_COMMUNITY: ${HOMELABMAP_SNMP_COMMUNITY:-}
+      HOMELABMAP_SNMP_USER: ${HOMELABMAP_SNMP_USER:-}
+      HOMELABMAP_SNMP_AUTH_PASS: ${HOMELABMAP_SNMP_AUTH_PASS:-}
+      HOMELABMAP_SNMP_PRIV_PASS: ${HOMELABMAP_SNMP_PRIV_PASS:-}
+      HOMELABMAP_UNIFI_URL: ${HOMELABMAP_UNIFI_URL:-}
+      HOMELABMAP_UNIFI_API_KEY: ${HOMELABMAP_UNIFI_API_KEY:-}
+      HOMELABMAP_UNIFI_INSECURE_TLS: ${HOMELABMAP_UNIFI_INSECURE_TLS:-}
+      HOMELABMAP_PVE_URL: ${HOMELABMAP_PVE_URL:-}
+      HOMELABMAP_PVE_TOKEN_ID: ${HOMELABMAP_PVE_TOKEN_ID:-}
+      HOMELABMAP_PVE_TOKEN_SECRET: ${HOMELABMAP_PVE_TOKEN_SECRET:-}
+      HOMELABMAP_PVE_INSECURE_TLS: ${HOMELABMAP_PVE_INSECURE_TLS:-}
+      HOMELABMAP_COSMOS_URL: ${HOMELABMAP_COSMOS_URL:-}
+      HOMELABMAP_COSMOS_TOKEN: ${HOMELABMAP_COSMOS_TOKEN:-}
+    tmpfs:
+      - /tmp
+    depends_on: [web]
+
+volumes:
+  data:

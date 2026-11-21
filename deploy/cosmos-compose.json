@@ -1,7 +1,7 @@
 {
   "services": {
     "homelabmap-web": {
-      "image": "<REGISTRY>/homelabmap/web:<HOMELABMAP_VERSION>",
+      "image": "<HOMELABMAP_IMAGE_PREFIX>-web:<HOMELABMAP_VERSION>",
       "container_name": "homelabmap-web",
       "restart": "unless-stopped",
       "environment": [
@@ -13,6 +13,7 @@
         "HOMELABMAP_OIDC_CLIENT_SECRET=<HOMELABMAP_OIDC_CLIENT_SECRET>",
         "HOMELABMAP_OIDC_ALLOWED_GROUPS=<HOMELABMAP_OIDC_ALLOWED_GROUPS>",
         "HOMELABMAP_OIDC_PROVIDER_NAME=<HOMELABMAP_OIDC_PROVIDER_NAME>",
+        "HOMELABMAP_DB=<HOMELABMAP_DB>",
         "HOMELABMAP_SCAN_INTERVAL=1h"
       ],
       "ports": [
@@ -21,7 +22,7 @@
       "volumes": [
         {
           "type": "volume",
-          "source": "homelabmap-data",
+          "source": "<HOMELABMAP_DATA_VOLUME>",
           "target": "/data"
         }
       ],
@@ -56,7 +57,7 @@
       ]
     },
     "homelabmap-scanner": {
-      "image": "<REGISTRY>/homelabmap/scanner:<HOMELABMAP_VERSION>",
+      "image": "<HOMELABMAP_IMAGE_PREFIX>-scanner:<HOMELABMAP_VERSION>",
       "container_name": "homelabmap-scanner",
       "restart": "unless-stopped",
       "network_mode": "host",
@@ -68,7 +69,7 @@
         "HOMELABMAP_AGENT_TOKEN=<HOMELABMAP_AGENT_TOKEN>",
         "HOMELABMAP_SUBNETS=<HOMELABMAP_SUBNETS>",
         "HOMELABMAP_SNMP_VERSION=2c",
-        "HOMELABMAP_SNMP_COMMUNITY=<SNMP_RO_COMMUNITY>",
+        "HOMELABMAP_SNMP_COMMUNITY=<HOMELABMAP_SNMP_COMMUNITY>",
         "HOMELABMAP_UNIFI_URL=<HOMELABMAP_UNIFI_URL>",
         "HOMELABMAP_UNIFI_API_KEY=<HOMELABMAP_UNIFI_API_KEY>",
         "HOMELABMAP_UNIFI_INSECURE_TLS=<HOMELABMAP_UNIFI_INSECURE_TLS>",

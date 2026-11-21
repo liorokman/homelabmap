@@ -11,8 +11,15 @@ RUN CGO_ENABLED=0 go test ./... && \
       -ldflags "-s -w -X github.com/liorokman/homelabmap/internal/scanner.Version=${VERSION}" \
       -o /out/ ./cmd/homelabmap-web ./cmd/homelabmap-scanner ./cmd/homelabmap-listen
 
+FROM alpine:3.24.4 AS base
+LABEL org.opencontainers.image.source="https://github.com/liorokman/homelabmap" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.url="https://github.com/liorokman/homelabmap"
+
 # --- UI, API, scheduler, SQLite. No special privileges. ---
-FROM alpine:3.24.4 AS web
+FROM base AS web
+LABEL org.opencontainers.image.title="homelabmap-web" \
+      org.opencontainers.image.description="homelabmap web UI, API and topology inference"
 RUN adduser -D -H -u 65532 homelabmap && mkdir /data && chown 65532:65532 /data
 COPY --from=build /out/homelabmap-web /usr/local/bin/homelabmap-web
 USER 65532:65532
@@ -25,7 +32,9 @@ ENTRYPOINT ["/usr/local/bin/homelabmap-web"]
 # (homelabmap-listen, raw sockets only) carry capabilities.
 # The container must be started with cap_add NET_RAW, NET_ADMIN (and may
 # drop everything else): file caps outside the bounding set make exec fail.
-FROM alpine:3.24.4 AS scanner
+FROM base AS scanner
+LABEL org.opencontainers.image.title="homelabmap-scanner" \
+      org.opencontainers.image.description="homelabmap network scanner (host network, nmap, SNMP, APIs)"
 COPY --from=build /out/homelabmap-scanner /out/homelabmap-listen /usr/local/bin/
 RUN apk add --no-cache nmap && \
     apk add --no-cache --virtual .caps libcap-utils && \

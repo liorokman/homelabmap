@@ -3,25 +3,60 @@ version: "3"
 dotenv: [".env"]
 
 vars:
-  REGISTRY: '{{.REGISTRY}}' # from .env
+  # Images are <IMAGE_PREFIX>-web and <IMAGE_PREFIX>-scanner.
+  IMAGE_PREFIX: '{{.HOMELABMAP_IMAGE_PREFIX | default "ghcr.io/liorokman/homelabmap"}}'
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || date -u +%Y%m%d%H%M
   TARGETS: web scanner
+  GOLANGCI_LINT_VERSION: v2.15.0
+  COVERAGE_MIN: 80
 
 tasks:
   default:
     cmds:
       - task --list
 
-  test:
-    desc: Run all unit tests (also run inside the image build)
+  check:
+    desc: go vet, golangci-lint, and the tests with coverage
     cmds:
-      - go test ./...
+      - task: vet
+      - task: lint
+      - task: cover
 
   vet:
     desc: Run go vet
     cmds:
       - go vet ./...
+
+  lint:
+    desc: Run golangci-lint (install it with `task lint:install`)
+    cmds:
+      - golangci-lint run ./...
+
+  lint:install:
+    desc: Install the pinned golangci-lint into $(go env GOPATH)/bin
+    cmds:
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+
+  test:
+    desc: Run all unit tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  cover:
+    desc: Run the tests with coverage; fail below {{.COVERAGE_MIN}}% (internal packages)
+    cmds:
+      - mkdir -p out
+      - go test -race -covermode=atomic -coverprofile=out/coverage.out ./internal/...
+      - |
+        go tool cover -func=out/coverage.out | awk -v min={{.COVERAGE_MIN}} '/^total:/ {
+          sub("%", "", $3); printf "coverage: %s%% (minimum %s%%)\n", $3, min; if ($3 + 0 < min) exit 1 }'
+
+  cover:html:
+    desc: Open an HTML coverage report
+    deps: [cover]
+    cmds:
+      - go tool cover -html=out/coverage.out
 
   build:
     desc: Build the binaries into out/
@@ -31,10 +66,10 @@ tasks:
       - go build -o out/ ./cmd/homelabmap-web ./cmd/homelabmap-scanner ./cmd/homelabmap-listen
 
   images:
-    desc: "Build both images (VERSION=x.y.z task images)"
+    desc: "Build both images for this machine (VERSION=x.y.z task images)"
     cmds:
       - for: { var: TARGETS }
-        cmd: docker build --target {{.ITEM}} --build-arg VERSION={{.VERSION}} -t {{.REGISTRY}}/homelabmap/{{.ITEM}}:{{.VERSION}} .
+        cmd: docker build --target {{.ITEM}} --build-arg VERSION={{.VERSION}} -t {{.IMAGE_PREFIX}}-{{.ITEM}}:{{.VERSION}} .
 
   push:
     desc: "Build and push both images with crane (auth from ~/.docker/config.json)"
@@ -43,11 +78,16 @@ tasks:
       - mkdir -p out
       - for: { var: TARGETS }
         cmd: |
-          docker save -o out/{{.ITEM}}.tar {{.REGISTRY}}/homelabmap/{{.ITEM}}:{{.VERSION}}
-          crane push out/{{.ITEM}}.tar {{.REGISTRY}}/homelabmap/{{.ITEM}}:{{.VERSION}}
+          docker save -o out/{{.ITEM}}.tar {{.IMAGE_PREFIX}}-{{.ITEM}}:{{.VERSION}}
+          crane push out/{{.ITEM}}.tar {{.IMAGE_PREFIX}}-{{.ITEM}}:{{.VERSION}}
+
+  demo:
+    desc: "Run the UI locally on fictional demo data: http://127.0.0.1:8090"
+    cmds:
+      - go run ./tools/demo
 
   render:
-    desc: Render deploy/cosmos-compose.rendered.json from .env
+    desc: Render deploy/cosmos-compose.rendered.json from .env (Cosmos deployments)
     cmds:
       - python3 deploy/render.py
 
