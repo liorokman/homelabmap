@@ -41,6 +41,7 @@
       <legend>Show</legend>
       <label><input type="checkbox" id="f-edge" checked> End devices</label>
       <label><input type="checkbox" id="f-virtual" checked> VMs &amp; containers</label>
+      <label class="map-only"><input type="checkbox" id="f-stacks"> Open stacks</label>
       <label><input type="checkbox" id="f-unknown" checked> Devices with unknown location</label>
       <label><input type="checkbox" id="f-off" checked> Off or not seen now</label>
       <label class="map-only"><input type="checkbox" id="f-ports"> Port labels on links</label>
@@ -80,6 +81,7 @@
     <div class="table-bar">
       <div class="seg" role="group" aria-label="Table">
         <button type="button" data-table="devices" aria-pressed="true">Devices</button>
+        <button type="button" data-table="containers" aria-pressed="false">Containers</button>
         <button type="button" data-table="links" aria-pressed="false">Links</button>
         <button type="button" data-table="sightings" aria-pressed="false">Heard</button>
         <button type="button" data-table="scans" aria-pressed="false">Scans</button>

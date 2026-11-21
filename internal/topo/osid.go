@@ -33,6 +33,8 @@ const (
 	IconCamera        = "camera"
 	IconGaming        = "gaming"
 	IconUnknown       = "unknown"
+	IconDocker        = "docker"
+	IconStack         = "stack"
 )
 
 type osGuess struct {

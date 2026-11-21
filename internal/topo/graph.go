@@ -11,7 +11,7 @@ import (
 )
 
 // Version changes whenever inference changes, so stored graphs get rebuilt.
-const Version = 4
+const Version = 5
 
 // Roles. Infra roles are drawn as network gear.
 const (
@@ -21,7 +21,9 @@ const (
 	RoleHypervisor = "hypervisor"
 	RoleServer     = "server"
 	RoleVM         = "vm"
-	RoleContainer  = "container"
+	RoleContainer  = "container" // LXC on a hypervisor
+	RoleDocker     = "docker"    // Docker container on a Cosmos host
+	RoleStack      = "stack"     // a group of Docker containers
 	RolePrinter    = "printer"
 	RoleClient     = "client"
 )
@@ -68,22 +70,32 @@ type Node struct {
 	IPv6     []string `json:"ipv6,omitempty"` // heard via neighbour discovery
 	MACs     []string `json:"macs,omitempty"`
 	// OtherMACs are earlier private (randomised) MACs of the same device.
-	OtherMACs  []string  `json:"otherMacs,omitempty"`
-	DNS        []string  `json:"dns,omitempty"`
-	Vendor     string    `json:"vendor,omitempty"`
-	Model      string    `json:"model,omitempty"`
-	Location   string    `json:"location,omitempty"`
-	Connection string    `json:"connection,omitempty"`
-	Parent     string    `json:"parent,omitempty"`
-	Power      string    `json:"power,omitempty"`      // PowerOn, PowerOff or unknown
-	Absent     bool      `json:"absent,omitempty"`     // not seen now; shown from history
-	PowerState string    `json:"powerState,omitempty"` // as reported, e.g. "stopped"
-	OpenPorts  []string  `json:"openPorts,omitempty"`
-	Sources    []string  `json:"sources"`
-	FirstSeen  time.Time `json:"firstSeen,omitzero"`
-	LastSeen   time.Time `json:"lastSeen,omitzero"`
-	New        bool      `json:"new,omitempty"`
-	Depth      int       `json:"depth"`
+	OtherMACs  []string `json:"otherMacs,omitempty"`
+	DNS        []string `json:"dns,omitempty"`
+	Vendor     string   `json:"vendor,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Location   string   `json:"location,omitempty"`
+	Connection string   `json:"connection,omitempty"`
+	Parent     string   `json:"parent,omitempty"`
+	Power      string   `json:"power,omitempty"`      // PowerOn, PowerOff or unknown
+	Absent     bool     `json:"absent,omitempty"`     // not seen now; shown from history
+	PowerState string   `json:"powerState,omitempty"` // as reported, e.g. "stopped"
+	OpenPorts  []string `json:"openPorts,omitempty"`
+	// URLs are reverse-proxy routes (Cosmos) that lead to this device.
+	URLs []string `json:"urls,omitempty"`
+
+	// Docker containers and stacks.
+	Image     string    `json:"image,omitempty"`
+	Status    string    `json:"status,omitempty"`  // "Up 4 days", "2/3 running"
+	Network   string    `json:"network,omitempty"` // network mode
+	Published []string  `json:"published,omitempty"`
+	Stack     string    `json:"stack,omitempty"`   // a container's stack node ID
+	Members   []string  `json:"members,omitempty"` // a stack's container node IDs
+	Sources   []string  `json:"sources"`
+	FirstSeen time.Time `json:"firstSeen,omitzero"`
+	LastSeen  time.Time `json:"lastSeen,omitzero"`
+	New       bool      `json:"new,omitempty"`
+	Depth     int       `json:"depth"`
 }
 
 type Edge struct {

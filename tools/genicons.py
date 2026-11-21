@@ -11,12 +11,12 @@ tabler, simple = sys.argv[1], sys.argv[2]
 TABLER = {  # key -> tabler outline icon
     "router": "router", "ap": "access-point", "windows": "brand-windows", "printer": "printer",
     "media": "device-tv", "iot": "cpu", "phone": "device-mobile", "nas": "database", "server": "server",
-    "camera": "device-cctv", "gaming": "device-gamepad", "unknown": "help",
+    "camera": "device-cctv", "gaming": "device-gamepad", "unknown": "help", "stack": "stack-2",
 }
 SIMPLE = {  # key -> simple-icons slug
     "proxmox": "proxmox", "linux": "linux", "debian": "debian", "ubuntu": "ubuntu", "alpine": "alpinelinux",
     "raspberrypi": "raspberrypi", "apple": "apple", "android": "android", "freebsd": "freebsd",
-    "homeassistant": "homeassistant",
+    "homeassistant": "homeassistant", "docker": "docker",
 }
 # A network switch: chassis with ports (no suitable icon in either set).
 CUSTOM = {"switch": ('<rect x="2" y="7" width="20" height="10" rx="2"/>'

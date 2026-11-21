@@ -62,6 +62,7 @@ type Result struct {
 	PVE     *PVE              `json:"pve,omitempty"`
 	OSScans []OSScan          `json:"osScans,omitempty"`
 	SSDP    []SSDPDevice      `json:"ssdp,omitempty"`
+	Cosmos  *Cosmos           `json:"cosmos,omitempty"`
 	DNS     map[string]string `json:"dns,omitempty"` // IP -> PTR name
 	// Errors are non-fatal collector problems, shown in the UI.
 	Errors []string `json:"errors,omitempty"`
@@ -175,6 +176,46 @@ type UniFi struct {
 	Known []json.RawMessage `json:"known,omitempty"`
 	// History is clients seen recently but not connected now (v2 API).
 	History []json.RawMessage `json:"history,omitempty"`
+}
+
+// Cosmos is a Cosmos server's containers and reverse-proxy routes. Only
+// what the map needs is kept: no environment, commands or other config.
+type Cosmos struct {
+	URL        string            `json:"url"`
+	HostIPs    []string          `json:"hostIps,omitempty"` // the Cosmos host's addresses
+	Containers []CosmosContainer `json:"containers"`
+	Routes     []CosmosRoute     `json:"routes,omitempty"`
+}
+
+type CosmosContainer struct {
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Image       string       `json:"image"`
+	State       string       `json:"state"`  // running, exited, ...
+	Status      string       `json:"status"` // "Up 4 days"
+	Created     time.Time    `json:"created,omitzero"`
+	NetworkMode string       `json:"networkMode,omitempty"`
+	Networks    []string     `json:"networks,omitempty"`
+	Ports       []DockerPort `json:"ports,omitempty"`
+	Stack       string       `json:"stack,omitempty"` // cosmos-stack or compose project
+	StackMain   bool         `json:"stackMain,omitempty"`
+}
+
+type DockerPort struct {
+	IP          string `json:"ip,omitempty"`
+	PrivatePort int    `json:"privatePort"`
+	PublicPort  int    `json:"publicPort,omitempty"`
+	Type        string `json:"type"`
+}
+
+type CosmosRoute struct {
+	Name       string `json:"name"`
+	Host       string `json:"host,omitempty"`
+	PathPrefix string `json:"pathPrefix,omitempty"`
+	Target     string `json:"target"`
+	Mode       string `json:"mode"`
+	AuthOnly   bool   `json:"authOnly,omitempty"`
+	Disabled   bool   `json:"disabled,omitempty"`
 }
 
 // SSDPDevice is a UPnP device that answered an SSDP search, with its

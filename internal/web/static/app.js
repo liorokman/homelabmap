@@ -54,12 +54,15 @@ const OS_COLOR = {
   freebsd: '--os-linux', proxmox: '--os-proxmox', homeassistant: '--os-iot', windows: '--os-windows', apple: '--os-apple',
   android: '--os-android', printer: '--os-printer', media: '--os-media', gaming: '--os-media', iot: '--os-iot',
   camera: '--os-iot', phone: '--os-phone', nas: '--os-server', server: '--os-server', unknown: '--os-unknown',
+  docker: '--os-docker', stack: '--os-docker',
 };
 const ROLE_COLOR = { router: '--node-router', switch: '--node-switch', ap: '--node-ap' };
 const ROLE_NAME = {
   router: 'Router', switch: 'Switch', ap: 'Access point', hypervisor: 'Hypervisor', server: 'Server',
   vm: 'VM', container: 'Container', printer: 'Printer', client: 'Device',
+  docker: 'Docker container', stack: 'Stack',
 };
+const VIRTUAL_ROLES = new Set(['vm', 'container', 'docker', 'stack']);
 const KIND_NAME = {
   infra: 'Cable between network devices', wired: 'Cable', wireless: 'Wi-Fi', virtual: 'Virtual (inside host)',
   inferred: 'Inferred from MAC tables', unknown: 'Location unknown',
@@ -102,7 +105,7 @@ const state = {
   filters: { off: true, ...store.get('filters', { edge: true, virtual: true, unknown: true, ports: false }) },
   // #table, #table/heard etc. win over the remembered view.
   view: location.hash.startsWith('#table') ? 'table'
-    : location.hash === '#map' ? 'map'
+    : location.hash.startsWith('#map') ? 'map'
       : store.get('view', 'map') === 'table' ? 'table' : 'map',
   table: null,
   mapStale: false, // laid out while hidden: fit when shown
@@ -155,6 +158,18 @@ function buildStyle() {
     { selector: 'node.virtual', style: { width: 26, height: 26, 'border-style': 'dashed', 'font-size': 10 } },
     { selector: 'node.vm', style: { shape: 'round-rectangle' } },
     { selector: 'node.container', style: { shape: 'hexagon', width: 30, height: 27 } },
+    { selector: 'node.docker', style: { shape: 'hexagon', width: 30, height: 27 } },
+    // A closed stack: a layered square, like a pile of containers.
+    { selector: 'node.stack', style: { shape: 'round-rectangle', width: 34, height: 34, 'border-style': 'double', 'border-width': 4 } },
+    // An opened stack: a dashed box around its containers, labelled on top.
+    {
+      selector: 'node.stackbox',
+      style: {
+        'background-image': 'none', 'background-color': c('--os-docker'), 'background-opacity': 0.06,
+        'border-style': 'dashed', 'border-width': 1.5, 'border-color': c('--os-docker'),
+        'text-valign': 'top', 'text-margin-y': -4, padding: 14, 'font-weight': 600,
+      },
+    },
     // Powered off: grey (see nodeColors), see-through, muted label.
     { selector: 'node.off', style: { opacity: 0.55, color: c('--muted'), 'font-style': 'italic' } },
     // Absent (not seen now, shown from history): fainter still, dotted.
@@ -201,11 +216,23 @@ function buildStyle() {
   ];
 }
 
+// toElements turns the graph into Cytoscape elements. Stacks are shown
+// closed (one node per stack, members hidden) unless "Open stacks" is on;
+// then each stack is a compound box around its containers.
 function toElements(graph) {
   const els = [];
+  const open = state.filters.stacks === true;
+  const shown = new Set();
+  const stackOf = new Map();
   for (const n of graph.nodes || []) {
+    if (n.role === 'docker' && n.stack) {
+      stackOf.set(n.id, n.stack);
+      if (!open) continue;
+    }
+    shown.add(n.id);
     const cls = [n.infra ? 'infra' : 'edge', n.role];
-    if (n.role === 'vm' || n.role === 'container') cls.push('virtual');
+    if (VIRTUAL_ROLES.has(n.role)) cls.push('virtual');
+    if (n.role === 'stack' && open) cls.push('stackbox');
     if (n.connection === 'unknown') cls.push('unknownloc');
     if (n.new) cls.push('new');
     if (n.power === 'off') cls.push('off');
@@ -213,11 +240,17 @@ function toElements(graph) {
     if (n.location === 'gateway') cls.push('gateway');
     // Cytoscape reads data.parent as a compound parent and would draw the
     // hypervisor as a box around its guests; keep it under another name.
+    // Only an opened stack is a compound parent (its box); everything else
+    // keeps its host under another name.
     const { parent, ...rest } = n;
-    els.push({ group: 'nodes', data: { ...rest, host: parent, ...nodeColors(n) }, classes: cls.join(' ') });
+    const data = { ...rest, host: parent, ...nodeColors(n) };
+    if (open && n.role === 'docker' && n.stack) data.parent = n.stack;
+    els.push({ group: 'nodes', data, classes: cls.join(' ') });
   }
   const off = new Set((graph.nodes || []).filter((n) => n.power === 'off').map((n) => n.id));
   for (const e of graph.edges || []) {
+    if (!shown.has(e.source) || !shown.has(e.target)) continue;
+    if (stackOf.get(e.target) === e.source) continue; // the box shows membership
     const cls = [e.kind];
     if (off.has(e.source) || off.has(e.target)) cls.push('off');
     if (e.absent) cls.push('absent');
@@ -441,7 +474,7 @@ async function scanNow() {
 // isVisible applies the "Show" filters to a node's data (map and table).
 function isVisible(d) {
   const f = state.filters;
-  const virtual = d.role === 'vm' || d.role === 'container';
+  const virtual = VIRTUAL_ROLES.has(d.role);
   return !((!f.edge && !d.infra) || (!f.virtual && virtual) || (!f.unknown && d.connection === 'unknown') ||
     (f.off === false && d.power === 'off'));
 }
@@ -449,7 +482,7 @@ function isVisible(d) {
 // matchesQuery is the search box's test (q already lower-cased).
 function matchesQuery(d, q) {
   if (!q) return true;
-  const hay = [d.label, d.os, d.vendor, d.location, d.model, ...(d.ips || []), ...(d.ipv6 || []), ...(d.macs || []), ...(d.otherMacs || []), ...(d.dns || [])]
+  const hay = [d.label, d.os, d.vendor, d.location, d.model, d.image, ...(d.ips || []), ...(d.ipv6 || []), ...(d.macs || []), ...(d.otherMacs || []), ...(d.dns || [])]
     .join(' ').toLowerCase();
   return hay.includes(q);
 }
@@ -504,7 +537,17 @@ function osLine(d) {
 
 function showTooltip(el) {
   const tip = $('#tooltip');
-  if (el.isNode()) {
+  if (el.isNode() && (el.data('role') === 'docker' || el.data('role') === 'stack')) {
+    const d = el.data();
+    tip.innerHTML = nodeHeader(d) + '<dl class="kv">' +
+      row('Image', d.image, 'mono') +
+      row(d.role === 'stack' ? 'Containers' : 'Status', d.status) +
+      row('Power', powerLine(d), d.power === 'off' ? 'off' : '') +
+      row('Network', d.network) +
+      row('URL', d.urls) +
+      row('Where', d.location) +
+      '</dl>';
+  } else if (el.isNode()) {
     const d = el.data();
     tip.innerHTML = nodeHeader(d) + '<dl class="kv">' +
       row('IP', d.ips?.length ? d.ips : '—', 'mono') +
@@ -566,12 +609,40 @@ function showDetails(node) {
     row('Where', d.location) +
     row('First seen', d.firstSeen ? dateTime(d.firstSeen) : '') +
     row('Last seen', d.lastSeen ? `${ago(d.lastSeen)} (${dateTime(d.lastSeen)})` : '') +
+    row('Image', d.image, 'mono') +
+    row('Status', d.status) +
+    row('Network', d.network) +
+    row('Published', d.published, 'mono') +
     '</dl>' +
+    urlSection(d) +
+    membersSection(d) +
     (d.openPorts?.length ? `<section><h4>Open ports</h4><div class="mono">${d.openPorts.map(esc).join('<br>')}</div></section>` : '') +
     (links.length ? `<section><h4>Connections</h4><ul>${links.join('')}</ul></section>` : '') +
     `<section><h4>Sources</h4><div class="src">${esc((d.sources || []).join(', '))}</div></section>`;
   panel.hidden = false;
   state.cy.resize();
+}
+
+// urlSection lists reverse-proxy routes as links. They are always
+// https://<host> built by homelabmap from the Cosmos configuration.
+function urlSection(d) {
+  if (!d.urls?.length) return '';
+  const items = d.urls.map((u) => `<li><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https:\/\//, ''))}</a></li>`);
+  return `<section><h4>Open in browser</h4><ul>${items.join('')}</ul></section>`;
+}
+
+// membersSection lists a stack's containers; with stacks closed they
+// aren't on the map, so they're listed without links.
+function membersSection(d) {
+  if (!d.members?.length) return '';
+  const byId = new Map((state.graph?.nodes || []).map((n) => [n.id, n]));
+  const items = d.members.map((id) => {
+    const m = byId.get(id);
+    if (!m) return '';
+    const name = state.cy.getElementById(id).length ? `<a data-goto="${esc(id)}">${esc(m.label)}</a>` : esc(m.label);
+    return `<li>${name} <span class="src">${esc(m.power === 'off' ? m.powerState || 'stopped' : m.status || 'running')} · ${esc(m.image || '')}</span></li>`;
+  });
+  return `<section><h4>Containers</h4><ul>${items.join('')}</ul></section>`;
 }
 
 function closeDetails() {
@@ -607,6 +678,7 @@ function renderLegend() {
     os('android', 'Android') + os('printer', 'Printer') + os('media', 'TV / media') + os('iot', 'IoT') +
     os('phone', 'Phone (private MAC)') + os('unknown', 'Unknown') +
     shape('vm', 'VM') + shape('container', 'Container') + shape('off', 'Powered off') + shape('absent', 'Not seen now') +
+    os('docker', 'Docker container') + os('stack', 'Docker stack') +
     line('infra', 'Cable between network devices') + line('', 'Cable to a device') + line('wireless', 'Wi-Fi') +
     line('virtual', 'VM / container on host') + line('guess', 'Inferred or unknown location');
 }
@@ -627,7 +699,7 @@ function setView(view) {
   state.view = view;
   store.set('view', view);
   document.body.dataset.view = view;
-  if (view === 'map') history.replaceState(null, '', '#map');
+  if (view === 'map') history.replaceState(null, '', state.filters.stacks ? '#map/stacks' : '#map');
   document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
   $('.map-wrap').hidden = view !== 'map';
   $('#table-view').hidden = view !== 'table';
@@ -646,7 +718,12 @@ function setView(view) {
 // selectNode shows a device's details from anywhere (table rows, links in
 // the details panel); on the map it also centres it.
 function selectNode(id) {
-  const n = state.cy.getElementById(id);
+  let n = state.cy.getElementById(id);
+  if (!n.length) {
+    // A container in a closed stack isn't drawn: show its stack.
+    const stack = (state.graph?.nodes || []).find((g) => g.id === id)?.stack;
+    if (stack) n = state.cy.getElementById(stack);
+  }
   if (!n.length) return;
   state.cy.$(':selected').unselect();
   n.select();
@@ -668,6 +745,17 @@ function bindControls() {
     if (id) selectNode(id);
   });
 
+  const stacks = $('#f-stacks');
+  stacks.checked = state.filters.stacks === true;
+  stacks.addEventListener('change', async () => {
+    state.filters.stacks = stacks.checked;
+    store.set('filters', state.filters);
+    history.replaceState(null, '', stacks.checked ? '#map/stacks' : '#map');
+    closeDetails();
+    // Opening or closing stacks changes which nodes exist: rebuild.
+    state.cy.elements().remove();
+    await loadGraph();
+  });
   for (const [id, key] of [['#f-edge', 'edge'], ['#f-virtual', 'virtual'], ['#f-unknown', 'unknown'], ['#f-off', 'off'], ['#f-ports', 'ports']]) {
     const box = $(id);
     box.checked = state.filters[key];
@@ -714,6 +802,8 @@ function bindControls() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
 }
 
+// #map/stacks opens the stacks (bookmarkable).
+if (location.hash === '#map/stacks') state.filters.stacks = true;
 initCy();
 state.table = createTable({
   esc, dateTime, ago, api, store, powerLine,

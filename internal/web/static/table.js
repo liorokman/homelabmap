@@ -3,9 +3,9 @@
 // Devices and Links come from the current map; Sightings (what the passive
 // listener heard) and Scans are fetched when shown.
 
-const VIEWS = ['devices', 'links', 'sightings', 'scans'];
+const VIEWS = ['devices', 'containers', 'links', 'sightings', 'scans'];
 // URL names (#table/heard) for each view.
-const SLUG = { devices: 'devices', links: 'links', sightings: 'heard', scans: 'scans' };
+const SLUG = { devices: 'devices', containers: 'containers', links: 'links', sightings: 'heard', scans: 'scans' };
 const fromSlug = (s) => Object.keys(SLUG).find((k) => SLUG[k] === s);
 
 // ipKey sorts IPv4 numerically and IPv6 after IPv4.
@@ -66,6 +66,25 @@ export function createTable(ctx) {
           col('First seen', (n) => dateTime(n.firstSeen), { sort: (n) => timeKey(n.firstSeen) }),
           col('Last seen', (n) => (n.lastSeen ? ago(n.lastSeen) : ''), { title: (n) => dateTime(n.lastSeen), sort: (n) => timeKey(n.lastSeen) }),
         ];
+      case 'containers': {
+        const label = labelByID();
+        return [
+          col('Name', (n) => n.label, { html: (n) => `<a data-node="${esc(n.id)}">${esc(n.label)}</a>` }),
+          col('Stack', (n) => (n.stack ? label.get(n.stack) || '' : '')),
+          col('State', (n) => (n.power === 'on' ? n.status || 'running' : n.powerState || 'stopped'), { cls: (n) => (n.power === 'off' ? 'off' : '') }),
+          col('Image', (n) => n.image || '', { cls: () => 'mono' }),
+          col('Network', (n) => n.network || ''),
+          col('Published', (n) => list(n.published), { html: (n) => listHTML(n.published, 'mono') }),
+          col('URL', (n) => list(n.urls), {
+            html: (n) => (n.urls || []).map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https:\/\//, ''))}</a></div>`).join(''),
+          }),
+          col('Host', (n) => {
+            const host = n.stack ? (ctx.graph()?.nodes || []).find((s) => s.id === n.stack)?.parent : n.parent;
+            return label.get(host) || '';
+          }),
+          col('Created', (n) => dateTime(n.firstSeen), { sort: (n) => timeKey(n.firstSeen) }),
+        ];
+      }
       case 'links': {
         const label = labelByID();
         return [
@@ -120,7 +139,9 @@ export function createTable(ctx) {
     const q = ctx.query();
     switch (view) {
       case 'devices':
-        return (g?.nodes || []).filter((n) => ctx.visible(n) && ctx.matches(n, q));
+        return (g?.nodes || []).filter((n) => n.role !== 'docker' && n.role !== 'stack' && ctx.visible(n) && ctx.matches(n, q));
+      case 'containers':
+        return (g?.nodes || []).filter((n) => n.role === 'docker' && ctx.matches(n, q));
       case 'links': {
         const nodes = new Map((g?.nodes || []).map((n) => [n.id, n]));
         return (g?.edges || []).filter((e) => {

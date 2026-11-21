@@ -71,6 +71,13 @@ func Scan(ctx context.Context, cfg Config, job obs.Job, log *slog.Logger) *obs.R
 			res.PVE = p
 		})
 	}
+	if cfg.CosmosURL != "" {
+		wg.Go(func() {
+			c, err := cosmosCollect(ctx, cfg)
+			errs.add("cosmos", err)
+			res.Cosmos = c
+		})
+	}
 	if cfg.SSDP {
 		wg.Go(func() {
 			d, err := ssdpDiscover(ctx, cfg, lanIface(cfg, res.Self))

@@ -37,7 +37,7 @@ func carry(g, prev *Graph, now time.Time, forget time.Duration) {
 	}
 	carried := map[string]bool{}
 	for _, p := range prev.Nodes {
-		if ids[p.ID] || p.Role == RoleVM || p.Role == RoleContainer || unnamed(p.Label) {
+		if ids[p.ID] || p.Role == RoleVM || p.Role == RoleContainer || p.Role == RoleDocker || p.Role == RoleStack || unnamed(p.Label) {
 			continue
 		}
 		if slices.ContainsFunc(p.MACs, func(m string) bool { return macs[m] }) {

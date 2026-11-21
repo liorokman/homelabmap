@@ -122,6 +122,7 @@ func Build(scanID int64, res *obs.Result, hist History) *Graph {
 		b.warn("scanner: %s", e)
 	}
 	g := b.output(scanID, gw)
+	b.addCosmos(g)
 	linkRotated(g) // the controller's history can hold a phone's old MACs
 	return g
 }

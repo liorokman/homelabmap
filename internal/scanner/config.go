@@ -48,6 +48,11 @@ type Config struct {
 
 	// SSDP enables the UPnP search (M-SEARCH) during scans.
 	SSDP bool
+
+	// Cosmos server API (read-only token: Resources Read, Configuration Read).
+	CosmosURL         string
+	CosmosToken       string
+	CosmosInsecureTLS bool
 }
 
 type SNMPConfig struct {
@@ -79,6 +84,8 @@ func LoadConfig() (Config, error) {
 		PVETokenSecret: os.Getenv("HOMELABMAP_PVE_TOKEN_SECRET"),
 		NmapPath:       env("HOMELABMAP_NMAP_PATH", "nmap"),
 		ListenPath:     env("HOMELABMAP_LISTEN_PATH", "homelabmap-listen"),
+		CosmosURL:      strings.TrimRight(os.Getenv("HOMELABMAP_COSMOS_URL"), "/"),
+		CosmosToken:    os.Getenv("HOMELABMAP_COSMOS_TOKEN"),
 		SNMP: SNMPConfig{
 			Version:   env("HOMELABMAP_SNMP_VERSION", "2c"),
 			Community: os.Getenv("HOMELABMAP_SNMP_COMMUNITY"),
@@ -100,6 +107,12 @@ func LoadConfig() (Config, error) {
 	}
 	if c.NmapPrivileged, err = envBool("HOMELABMAP_NMAP_PRIVILEGED", false); err != nil {
 		errs = append(errs, err)
+	}
+	if c.CosmosInsecureTLS, err = envBool("HOMELABMAP_COSMOS_INSECURE_TLS", false); err != nil {
+		errs = append(errs, err)
+	}
+	if (c.CosmosURL == "") != (c.CosmosToken == "") {
+		errs = append(errs, errors.New("set both HOMELABMAP_COSMOS_URL and HOMELABMAP_COSMOS_TOKEN, or neither"))
 	}
 	if c.SSDP, err = envBool("HOMELABMAP_SSDP", true); err != nil {
 		errs = append(errs, err)
