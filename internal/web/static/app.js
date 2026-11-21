@@ -280,11 +280,20 @@ function initCy() {
 
 // ---------- layout ----------
 
-function positionsKey() { return 'pos.' + state.layout; }
+// Open and closed stacks are different maps: each keeps its own positions,
+// so opening stacks lays them out afresh instead of crowding boxes in
+// between pinned devices.
+function positionsKey() { return 'pos.' + state.layout + (state.filters.stacks ? '.stacks' : ''); }
 
+// savePositions remembers where nodes are. An opened stack's box is left
+// out: its place and size come from its containers. Positions of nodes not
+// currently drawn (e.g. containers of closed stacks) are kept.
 function savePositions() {
-  const pos = {};
-  state.cy.nodes().forEach((n) => { pos[n.id()] = n.position(); });
+  const pos = store.get(positionsKey(), {});
+  state.cy.nodes().forEach((n) => {
+    const p = n.position();
+    if (!n.isParent() && Number.isFinite(p.x) && Number.isFinite(p.y)) pos[n.id()] = { x: p.x, y: p.y };
+  });
   store.set(positionsKey(), pos);
 }
 
@@ -297,11 +306,22 @@ function runLayout({ fresh = false } = {}) {
   const cy = state.cy;
   const visible = cy.elements().not('.hidden');
   if (visible.nodes().length === 0) return;
-  const saved = fresh ? {} : store.get(positionsKey(), {});
-  const known = visible.nodes().filter((n) => saved[n.id()]);
+  // Drop anything that isn't a usable point (e.g. saved by an older version).
+  const saved = Object.fromEntries(Object.entries(fresh ? {} : store.get(positionsKey(), {}))
+    .filter(([, p]) => p && Number.isFinite(p.x) && Number.isFinite(p.y)));
+  // Boxes (compound parents) are never positioned or pinned directly:
+  // fcose can't fix them, and moving one would move its containers.
+  const simple = visible.nodes().filter((n) => !n.isParent());
+  const known = simple.filter((n) => saved[n.id()]);
   known.forEach((n) => n.position(saved[n.id()]));
+  // Containers of a just-opened stack start where the stack node was, so
+  // the stack expands in place.
+  simple.filter((n) => !saved[n.id()] && n.isChild()).forEach((n) => {
+    const at = saved[n.parent().id()];
+    if (at) n.position({ x: at.x + (Math.random() - 0.5) * 40, y: at.y + (Math.random() - 0.5) * 40 });
+  });
 
-  if (known.length === visible.nodes().length) {
+  if (known.length === simple.length) {
     cy.fit(visible, 40);
     return;
   }
