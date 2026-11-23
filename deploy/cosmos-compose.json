@@ -36,7 +36,7 @@
       "routes": [
         {
           "Name": "homelabmap",
-          "Description": "homelabmap network topology map (OIDC login in the app)",
+          "Description": "homelabmap network topology map (login in the app)",
           "UseHost": true,
           "Host": "<HOMELABMAP_HOST>",
           "UsePathPrefix": false,

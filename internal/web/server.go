@@ -25,6 +25,7 @@ type Server struct {
 	store *store.Store
 	log   *slog.Logger
 	auth  *oidcAuth
+	pw    *passwordAuth
 	now   func() time.Time
 
 	// scannerSeen is the unix time of the last agent poll.
@@ -43,6 +44,7 @@ func New(cfg Config, st *store.Store, log *slog.Logger) *Server {
 		store: st,
 		log:   log,
 		auth:  &oidcAuth{cfg: cfg, store: st},
+		pw:    newPasswordAuth(),
 		now:   func() time.Time { return time.Now().UTC() },
 		wake:  make(chan struct{}, 1),
 
@@ -64,12 +66,19 @@ func (s *Server) UIHandler() http.Handler {
 	files := http.FileServerFS(static)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
-	mux.HandleFunc("GET /auth/login", s.handleLogin)
-	mux.HandleFunc("GET /auth/callback", s.handleCallback)
+	if s.cfg.PasswordLogin() {
+		mux.HandleFunc("POST /auth/password", s.handlePasswordLogin)
+		mux.HandleFunc("POST /auth/setup", s.handleSetup)
+		mux.HandleFunc("GET /signin/forgot", s.handleForgot)
+		mux.HandleFunc("POST /auth/reset", s.handleReset)
+	} else {
+		mux.HandleFunc("GET /auth/login", s.handleLogin)
+		mux.HandleFunc("GET /auth/callback", s.handleCallback)
+	}
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.HandleFunc("GET /signin", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("signed-out") != "" {
-			s.renderSignin(w, "/", true)
+			s.renderSignin(w, r, "/", true)
 			return
 		}
 		s.handleSignin(w, r)
@@ -84,6 +93,9 @@ func (s *Server) UIHandler() http.Handler {
 	app.HandleFunc("GET /api/scans", s.handleScans)
 	app.HandleFunc("GET /api/sightings", s.handleSightings)
 	app.HandleFunc("POST /api/scan", s.handleScanNow)
+	if s.cfg.PasswordLogin() {
+		app.HandleFunc("POST /api/password", s.handleChangePassword)
+	}
 	app.Handle("GET /", files)
 	mux.Handle("/", s.requireUser(app))
 
@@ -126,6 +138,9 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // Run serves both listeners and the scheduler until ctx ends.
 func (s *Server) Run(ctx context.Context) error {
 	s.rebuildStaleGraphs(ctx)
+	if err := s.announceSetup(ctx); err != nil {
+		return err
+	}
 	ui := &http.Server{Addr: s.cfg.Listen, Handler: s.UIHandler(),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: time.Minute, IdleTimeout: 2 * time.Minute}
 	agent := &http.Server{Addr: s.cfg.AgentListen, Handler: s.AgentHandler(),
@@ -149,6 +164,22 @@ func (s *Server) Run(ctx context.Context) error {
 		return errors.Join(ui.Shutdown(sctx), agent.Shutdown(sctx))
 	})
 	return g.Wait()
+}
+
+// announceSetup logs the one-time setup code while password login has no
+// account yet. Whoever can read the log can create the account; visitors
+// who merely reach the sign-in page first can't.
+func (s *Server) announceSetup(ctx context.Context) error {
+	if !s.cfg.PasswordLogin() {
+		return nil
+	}
+	exists, err := s.store.HasLocalUser(ctx)
+	if err != nil || exists {
+		return err
+	}
+	s.log.Warn("no account yet: open the sign-in page and create one with this setup code",
+		"url", s.cfg.PublicURL.JoinPath("/signin").String(), "setup_code", s.pw.setupCode)
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

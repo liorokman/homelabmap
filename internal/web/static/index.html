@@ -25,10 +25,34 @@
   <div class="status" id="status" aria-live="polite">Loading…</div>
   <div class="bar-actions">
     <button id="scan-now" class="btn primary" type="button">Scan now</button>
-    <span class="user" id="user"></span>
-    <form method="post" action="/auth/logout" class="inline"><button class="btn ghost" type="submit">Sign out</button></form>
+    <div class="menu" id="user-menu">
+      <button class="btn ghost menu-button" id="user-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="user-menu-list">
+        <span class="user" id="user">Account</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="menu-list" id="user-menu-list" role="menu" aria-labelledby="user-button" hidden>
+        <button type="button" role="menuitem" id="change-password" hidden>Change password</button>
+        <form method="post" action="/auth/logout"><button type="submit" role="menuitem">Sign out</button></form>
+      </div>
+    </div>
   </div>
 </header>
+
+<dialog id="password-dialog" aria-labelledby="password-title">
+  <form id="password-form" method="dialog" novalidate>
+    <h2 id="password-title">Change password</h2>
+    <input type="text" name="username" id="pw-username" autocomplete="username" hidden>
+    <label>Current password <input type="password" name="current" autocomplete="current-password" required></label>
+    <label>New password <input type="password" name="new" autocomplete="new-password" required minlength="12">
+      <small>At least 12 characters. Your other sessions are signed out.</small></label>
+    <label>Repeat new password <input type="password" name="confirm" autocomplete="new-password" required minlength="12"></label>
+    <p class="form-msg" id="password-msg" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="password-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="password-save">Change password</button>
+    </div>
+  </form>
+</dialog>
 
 <div class="layout">
   <aside class="controls" aria-label="Map controls">

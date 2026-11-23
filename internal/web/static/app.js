@@ -439,7 +439,8 @@ async function refreshStatus() {
     return;
   }
   state.status = st;
-  $('#user').textContent = st.user?.name || st.user?.email || '';
+  $('#user').textContent = st.user?.name || st.user?.email || 'Account';
+  $('#change-password').hidden = !st.canChangePassword;
 
   const parts = [];
   if (st.active) {
@@ -752,11 +753,113 @@ function selectNode(id) {
   else state.table.highlight(id);
 }
 
+// ---------- account menu ----------
+
+function bindUserMenu() {
+  const button = $('#user-button');
+  const list = $('#user-menu-list');
+  const items = () => [...list.querySelectorAll('[role="menuitem"]')].filter((el) => !el.hidden);
+  const isOpen = () => !list.hidden;
+  const open = (focusIndex = 0) => {
+    list.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    items().at(focusIndex)?.focus();
+  };
+  const close = (refocus = true) => {
+    if (!isOpen()) return;
+    list.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    if (refocus) button.focus();
+  };
+
+  button.addEventListener('click', () => (isOpen() ? close() : open()));
+  button.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); open(0); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); open(-1); }
+  });
+  list.addEventListener('keydown', (e) => {
+    const all = items();
+    const i = all.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); all[(i + 1) % all.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); all[(i - 1 + all.length) % all.length].focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); all[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); all.at(-1).focus(); }
+    else if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    else if (e.key === 'Tab') close(false);
+  });
+  document.addEventListener('click', (e) => { if (!$('#user-menu').contains(e.target)) close(false); });
+
+  $('#change-password').addEventListener('click', () => { close(false); openPasswordDialog(); });
+  bindPasswordDialog();
+}
+
+function openPasswordDialog() {
+  const form = $('#password-form');
+  form.reset();
+  // Lets password managers file the new password under the right account.
+  $('#pw-username').value = state.status?.user?.name || '';
+  showPasswordMsg('');
+  $('#password-save').disabled = false;
+  $('#password-dialog').showModal();
+  form.elements.current.focus();
+}
+
+function showPasswordMsg(text, ok = false) {
+  const msg = $('#password-msg');
+  msg.textContent = text;
+  msg.hidden = !text;
+  msg.classList.toggle('ok', ok);
+}
+
+function bindPasswordDialog() {
+  const dialog = $('#password-dialog');
+  const form = $('#password-form');
+  $('#password-cancel').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => { form.reset(); $('#user-button').focus(); });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const { current, new: next, confirm } = form.elements;
+    const invalid = (text, field) => { showPasswordMsg(text); field.focus(); };
+    if (!current.value) return invalid('Enter your current password.', current);
+    if (next.value.length < 12) return invalid('The new password must be at least 12 characters.', next);
+    if (next.value !== confirm.value) return invalid("The new passwords don't match.", confirm);
+
+    $('#password-save').disabled = true;
+    showPasswordMsg('');
+    let res;
+    try {
+      res = await fetch('/api/password', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-Homelabmap-Request': '1' },
+        body: JSON.stringify({ current: current.value, new: next.value }),
+      });
+    } catch (err) {
+      $('#password-save').disabled = false;
+      return showPasswordMsg('Could not reach the server: ' + err.message);
+    }
+    if (res.status === 401) {
+      location.href = '/signin?return=' + encodeURIComponent(location.pathname + location.hash);
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('#password-save').disabled = false;
+      showPasswordMsg(body.error || `Could not change the password (HTTP ${res.status}).`);
+      return;
+    }
+    const n = body.otherSessionsEnded || 0;
+    showPasswordMsg('Password changed.' + (n ? ` ${n} other session${n > 1 ? 's were' : ' was'} signed out.` : ''), true);
+    setTimeout(() => dialog.open && dialog.close(), 1800);
+  });
+}
+
 // ---------- wiring ----------
 
 function bindControls() {
   document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
   $('#scan-now').addEventListener('click', scanNow);
+  bindUserMenu();
   $('#fit').addEventListener('click', () => state.cy.fit(state.cy.elements().not('.hidden'), 40));
   $('#relayout').addEventListener('click', () => { store.del(positionsKey()); runLayout({ fresh: true }); });
   $('#details-close').addEventListener('click', closeDetails);
@@ -815,7 +918,7 @@ function bindControls() {
   document.addEventListener('keydown', (e) => {
     const typing = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
     if (e.key === '/' && !typing) { e.preventDefault(); search.focus(); }
-    if (e.key === 'Escape' && !typing) closeDetails();
+    if (e.key === 'Escape' && !typing && !$('#password-dialog').open) closeDetails();
   });
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', restyle);

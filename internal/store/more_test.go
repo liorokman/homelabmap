@@ -110,3 +110,99 @@ func TestMergeTargets(t *testing.T) {
 		t.Errorf("merged %+v", got)
 	}
 }
+
+func TestLocalUsers(t *testing.T) {
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "u.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if ok, err := s.HasLocalUser(ctx); ok || err != nil {
+		t.Fatalf("empty: %v %v", ok, err)
+	}
+	if _, err := s.GetLocalUser(ctx, "admin"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing user: %v", err)
+	}
+	now := time.Unix(1_900_000_000, 0).UTC()
+	if err := s.CreateFirstLocalUser(ctx, LocalUser{Username: "Admin", PasswordHash: "$argon2id$x", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateFirstLocalUser(ctx, LocalUser{Username: "other", PasswordHash: "h", CreatedAt: now}); !errors.Is(err, ErrUserExists) {
+		t.Errorf("second account: %v", err)
+	}
+	u, err := s.GetLocalUser(ctx, "admin")
+	if err != nil || u.Username != "Admin" || u.PasswordHash != "$argon2id$x" || !u.CreatedAt.Equal(now) {
+		t.Errorf("lookup ignoring case: %+v %v", u, err)
+	}
+	if ok, _ := s.HasLocalUser(ctx); !ok {
+		t.Error("account not reported")
+	}
+}
+
+func TestSetPasswordAndOtherSessions(t *testing.T) {
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Now()
+	if err := s.SetLocalPassword(ctx, "admin", "h"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing account: %v", err)
+	}
+	_ = s.CreateFirstLocalUser(ctx, LocalUser{Username: "admin", PasswordHash: "old", CreatedAt: now})
+	if err := s.SetLocalPassword(ctx, "ADMIN", "new"); err != nil {
+		t.Fatal(err)
+	}
+	if u, _ := s.GetLocalUser(ctx, "admin"); u.PasswordHash != "new" {
+		t.Errorf("hash not replaced: %q", u.PasswordHash)
+	}
+	for _, id := range []string{"a", "b", "c"} {
+		_ = s.CreateSession(ctx, id, Session{Subject: "local:admin", ExpiresAt: now.Add(time.Hour)}, now)
+	}
+	_ = s.CreateSession(ctx, "d", Session{Subject: "someone-else", ExpiresAt: now.Add(time.Hour)}, now)
+	if n, err := s.DeleteOtherSessions(ctx, "local:admin", "b"); n != 2 || err != nil {
+		t.Errorf("ended %d sessions: %v", n, err)
+	}
+	for id, want := range map[string]bool{"a": false, "b": true, "c": false, "d": true} {
+		if _, err := s.GetSession(ctx, id, now); (err == nil) != want {
+			t.Errorf("session %s kept=%v", id, err == nil)
+		}
+	}
+}
+
+func TestPasswordResets(t *testing.T) {
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Unix(1_900_000_000, 0).UTC()
+	if _, err := s.OnlyLocalUser(ctx); !errors.Is(err, ErrNotFound) {
+		t.Errorf("no account: %v", err)
+	}
+	_ = s.CreateFirstLocalUser(ctx, LocalUser{Username: "admin", PasswordHash: "h", CreatedAt: now})
+	if u, err := s.OnlyLocalUser(ctx); err != nil || u.Username != "admin" {
+		t.Errorf("only account: %+v %v", u, err)
+	}
+	if err := s.TakePasswordReset(ctx, "x", now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("no code: %v", err)
+	}
+	_ = s.SetPasswordReset(ctx, "one", now.Add(time.Minute))
+	_ = s.SetPasswordReset(ctx, "two", now.Add(time.Minute))
+	if err := s.TakePasswordReset(ctx, "one", now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("replaced code: %v", err)
+	}
+	if err := s.TakePasswordReset(ctx, "two", now.Add(time.Minute)); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expired code: %v", err)
+	}
+	_ = s.SetPasswordReset(ctx, "three", now.Add(time.Minute))
+	if err := s.TakePasswordReset(ctx, "three", now); err != nil {
+		t.Errorf("live code: %v", err)
+	}
+	if err := s.TakePasswordReset(ctx, "three", now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("reused code: %v", err)
+	}
+}

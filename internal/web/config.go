@@ -1,4 +1,4 @@
-// Package web is the homelabmap frontend: UI, API, OIDC login, scheduler and
+// Package web is the homelabmap frontend: UI, API, login (OIDC or password), scheduler and
 // the agent endpoint the scanner talks to.
 package web
 
@@ -44,11 +44,17 @@ type Config struct {
 	InsecureNoAuth bool
 }
 
+// PasswordLogin reports whether users sign in with the local account
+// because no OIDC provider is configured.
+func (c Config) PasswordLogin() bool {
+	return !c.InsecureNoAuth && c.OIDCIssuer == "" && c.OIDCClientID == ""
+}
+
 func LoadConfig() (Config, error) {
 	c := Config{
 		Listen:           env("HOMELABMAP_LISTEN", ":8080"),
 		AgentListen:      env("HOMELABMAP_AGENT_LISTEN", ":8081"),
-		DBPath:           env("HOMELABMAP_DB", "/data/homelabmap.db"),
+		DBPath:           DBPathFromEnv(),
 		AgentToken:       os.Getenv("HOMELABMAP_AGENT_TOKEN"),
 		OIDCIssuer:       os.Getenv("HOMELABMAP_OIDC_ISSUER"),
 		OIDCClientID:     os.Getenv("HOMELABMAP_OIDC_CLIENT_ID"),
@@ -130,8 +136,8 @@ func LoadConfig() (Config, error) {
 			errs = append(errs, errors.New("HOMELABMAP_INSECURE_NO_AUTH requires HOMELABMAP_LISTEN on loopback (e.g. 127.0.0.1:8080)"))
 		}
 	} else {
-		if c.OIDCIssuer == "" || c.OIDCClientID == "" {
-			errs = append(errs, errors.New("HOMELABMAP_OIDC_ISSUER and HOMELABMAP_OIDC_CLIENT_ID are required"))
+		if (c.OIDCIssuer == "") != (c.OIDCClientID == "") {
+			errs = append(errs, errors.New("set both HOMELABMAP_OIDC_ISSUER and HOMELABMAP_OIDC_CLIENT_ID, or neither for password login"))
 		}
 		if c.PublicURL != nil && c.PublicURL.Scheme != "https" {
 			errs = append(errs, errors.New("HOMELABMAP_PUBLIC_URL must be https when login is enabled"))
@@ -139,6 +145,9 @@ func LoadConfig() (Config, error) {
 	}
 	return c, errors.Join(errs...)
 }
+
+// DBPathFromEnv is the SQLite database path (HOMELABMAP_DB).
+func DBPathFromEnv() string { return env("HOMELABMAP_DB", "/data/homelabmap.db") }
 
 func env(k, def string) string {
 	if v := os.Getenv(k); v != "" {

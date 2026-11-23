@@ -111,6 +111,17 @@ var migrations = []string{
 		mac          TEXT PRIMARY KEY,
 		requested_at INTEGER NOT NULL
 	);`,
+	// 3: password login when no OIDC provider is configured.
+	`CREATE TABLE local_users (
+		username      TEXT PRIMARY KEY COLLATE NOCASE,
+		password_hash TEXT    NOT NULL,
+		created_at    INTEGER NOT NULL
+	);`,
+	// 4: password reset codes, made with "homelabmap-web reset-code".
+	`CREATE TABLE password_resets (
+		code_hash  TEXT PRIMARY KEY,
+		expires_at INTEGER NOT NULL
+	);`,
 }
 
 // Open opens (creating if needed) and migrates the database.

@@ -437,7 +437,9 @@ func TestConfigValidation(t *testing.T) {
 	cases := map[string]map[string]string{
 		"short agent token":        {"HOMELABMAP_AGENT_TOKEN": "short"},
 		"http public url with sso": {"HOMELABMAP_PUBLIC_URL": "http://homelabmap.example"},
-		"no oidc":                  {"HOMELABMAP_OIDC_ISSUER": ""},
+		"oidc issuer only":         {"HOMELABMAP_OIDC_CLIENT_ID": ""},
+		"oidc client only":         {"HOMELABMAP_OIDC_ISSUER": ""},
+		"http url with password":   {"HOMELABMAP_OIDC_ISSUER": "", "HOMELABMAP_OIDC_CLIENT_ID": "", "HOMELABMAP_PUBLIC_URL": "http://homelabmap.example"},
 		"no-auth on all ifaces":    {"HOMELABMAP_INSECURE_NO_AUTH": "true", "HOMELABMAP_LISTEN": ":8080"},
 		"scan interval too short":  {"HOMELABMAP_SCAN_INTERVAL": "10s"},
 		"negative probe budget":    {"HOMELABMAP_PROBE_MAX_PER_HOUR": "-1"},
@@ -450,6 +452,16 @@ func TestConfigValidation(t *testing.T) {
 			}
 		})
 	}
+	t.Run("password login without oidc", func(t *testing.T) {
+		set(t, map[string]string{"HOMELABMAP_OIDC_ISSUER": "", "HOMELABMAP_OIDC_CLIENT_ID": ""})
+		c, err := LoadConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.PasswordLogin() {
+			t.Error("password login expected without OIDC")
+		}
+	})
 	t.Run("no-auth on loopback", func(t *testing.T) {
 		set(t, map[string]string{"HOMELABMAP_INSECURE_NO_AUTH": "true", "HOMELABMAP_LISTEN": "127.0.0.1:8080",
 			"HOMELABMAP_OIDC_ISSUER": "", "HOMELABMAP_PUBLIC_URL": "http://127.0.0.1:8080"})

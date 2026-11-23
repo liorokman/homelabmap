@@ -1,7 +1,13 @@
 // Command demo runs the homelabmap UI on a fictional home lab, without a
-// scanner or a login: for trying the UI and for screenshots.
+// scanner: for trying the UI and for screenshots.
 //
 //	go run ./tools/demo            # then open http://127.0.0.1:8090
+//	go run ./tools/demo -no-auth   # no login at all (screenshots)
+//
+// By default it uses password login, as a real install without OIDC does:
+// the first visit creates the account with the setup code it prints, and
+// "Forgot password?" works with the reset-code command it prints. The
+// database is temporary, so every run starts from first-run setup.
 //
 // It also plays the scanner, so "Scan now" works. Nothing leaves the machine.
 package main
@@ -31,16 +37,17 @@ import (
 const agentToken = "demo-agent-token-0123456789abcdef0123"
 
 func main() {
-	listen := flag.String("listen", "127.0.0.1:8090", "UI address (loopback only: there is no login)")
+	listen := flag.String("listen", "127.0.0.1:8090", "UI address (loopback only: plain http)")
 	agent := flag.String("agent", "127.0.0.1:8098", "scanner API address")
+	noAuth := flag.Bool("no-auth", false, "disable login (for screenshots)")
 	flag.Parse()
-	if err := run(*listen, *agent); err != nil {
+	if err := run(*listen, *agent, *noAuth); err != nil {
 		fmt.Fprintln(os.Stderr, "demo:", err)
 		os.Exit(1)
 	}
 }
 
-func run(listen, agent string) error {
+func run(listen, agent string, noAuth bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -50,7 +57,8 @@ func run(listen, agent string) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	st, err := store.Open(ctx, filepath.Join(dir, "demo.db"))
+	dbPath := filepath.Join(dir, "demo.db")
+	st, err := store.Open(ctx, dbPath)
 	if err != nil {
 		return err
 	}
@@ -63,13 +71,18 @@ func run(listen, agent string) error {
 
 	pub, _ := url.Parse("http://" + listen)
 	cfg := web.Config{
-		Listen: listen, AgentListen: agent, PublicURL: pub, InsecureNoAuth: true,
+		Listen: listen, AgentListen: agent, PublicURL: pub, InsecureNoAuth: noAuth,
 		AgentToken: agentToken, SessionTTL: time.Hour, ScanInterval: time.Hour,
 		Retention: 14 * 24 * time.Hour, OSRescan: 7 * 24 * time.Hour, ForgetAfter: 30 * 24 * time.Hour,
 	}
 	go playScanner(ctx, "http://"+agent, log)
+	srv := web.New(cfg, st, log)
 	fmt.Printf("homelabmap demo: http://%s (Ctrl-C to stop)\n", listen)
-	return web.New(cfg, st, log).Run(ctx)
+	if !noAuth {
+		fmt.Printf("\nFirst visit: create the account with setup code %s\n", srv.SetupCode())
+		fmt.Printf("Forgot password? Get a reset code with:\n  HOMELABMAP_DB=%s go run ./cmd/homelabmap-web reset-code\n\n", dbPath)
+	}
+	return srv.Run(ctx)
 }
 
 // seed stores one finished scan of the demo network, plus a few things the

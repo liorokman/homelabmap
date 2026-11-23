@@ -35,17 +35,19 @@ access point, VMs and containers on their hosts, and Docker stacks.
 * **Table view** of everything (devices, containers, links, what was heard,
   scan history) with sorting and CSV export.
 * **Built for a home lab's security:** login via your OpenID Connect
-  provider (PKCE), a scanner that listens on no port and runs with only
+  provider (PKCE) or a built-in account, a scanner that listens on no port and runs with only
   raw-socket rights, read-only credentials. See [SECURITY.md](SECURITY.md).
 
 ## Quick start (Docker Compose)
 
-You need a Linux host on the LAN you want to map, Docker with Compose, an
-OpenID Connect provider (Authentik, Keycloak, Authelia, …) and an HTTPS
-reverse proxy.
+You need a Linux host on the LAN you want to map, Docker with Compose and an
+HTTPS reverse proxy. An OpenID Connect provider (Authentik, Keycloak,
+Authelia, …) is optional; without one, you sign in with a username and
+password you create on first run.
 
-1. **Create an OIDC client** at your identity provider: authorization code
-   flow, public client (PKCE) or confidential, with these redirect URIs:
+1. **Optional: create an OIDC client** at your identity provider:
+   authorization code flow, public client (PKCE) or confidential, with these
+   redirect URIs:
 
    ```
    https://homelabmap.example.net/auth/callback
@@ -58,12 +60,36 @@ reverse proxy.
    curl -O https://raw.githubusercontent.com/liorokman/homelabmap/main/compose.yaml
    curl -o .env https://raw.githubusercontent.com/liorokman/homelabmap/main/.env.example
    openssl rand -hex 32      # paste as HOMELABMAP_AGENT_TOKEN
-   $EDITOR .env              # public URL, OIDC client, subnets, credentials
+   $EDITOR .env              # public URL, OIDC client (optional), subnets, credentials
    ```
 
 3. **Start it:** `docker compose up -d`, and point your reverse proxy at
    `127.0.0.1:8080`. The first scan starts right away and takes a minute or
    two.
+
+4. **Without OIDC, create your account:** open the public URL. The sign-in
+   page asks for a setup code, a username and a password (at least 12
+   characters). The code is in the log:
+
+   ```sh
+   docker compose logs web | grep setup_code
+   ```
+
+   The code means only someone with access to the host can create the
+   account, not whoever reaches the page first. There is one account; the
+   password is stored as an Argon2id hash. To change it later, open the menu
+   under your name at the top right.
+
+   **Forgot it?** Follow "Forgot password?" on the sign-in page. It asks for
+   a one-time reset code, which you get on the host:
+
+   ```sh
+   docker compose exec web homelabmap-web reset-code
+   ```
+
+   (On Cosmos or without Compose: `docker exec homelabmap-web homelabmap-web
+   reset-code`.) The code works once, for 15 minutes; a reset signs out all
+   sessions.
 
 The two images are `ghcr.io/liorokman/homelabmap-web` and
 `ghcr.io/liorokman/homelabmap-scanner`.
@@ -162,7 +188,7 @@ All settings are environment variables; `.env.example` has the common ones.
 |---|---|---|
 | `HOMELABMAP_PUBLIC_URL` | (required) | URL users open; must be `https` with login |
 | `HOMELABMAP_AGENT_TOKEN` | (required) | shared with the scanner, ≥ 32 characters |
-| `HOMELABMAP_OIDC_ISSUER`, `_CLIENT_ID` | (required) | OpenID Connect provider and client |
+| `HOMELABMAP_OIDC_ISSUER`, `_CLIENT_ID` | | OpenID Connect provider and client; both empty = password login |
 | `HOMELABMAP_OIDC_CLIENT_SECRET` | | confidential clients only |
 | `HOMELABMAP_OIDC_ALLOWED_GROUPS` | any | comma-separated `groups` claim values |
 | `HOMELABMAP_OIDC_PROVIDER_NAME` | | "Sign in with …" label |
@@ -278,12 +304,15 @@ Requires Go (see `go.mod`) and [Task](https://taskfile.dev).
 
 ```sh
 task demo          # the UI on fictional data: http://127.0.0.1:8090
+                   # (password login; it prints the setup and reset-code steps)
 task check         # go vet, golangci-lint, tests with coverage (≥ 80%)
 task test          # tests with the race detector
 task lint:install  # the pinned golangci-lint
 task build         # binaries in out/
 task images        # both images for this machine
 ```
+
+For screenshots without a login, run `go run ./tools/demo -no-auth`.
 
 The image build runs the test suite too. Without root, nmap sees no MACs and
 can't fingerprint; to try the real scanner, run its image with

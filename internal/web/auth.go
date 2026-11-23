@@ -253,7 +253,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: s.sessionCookieName(), Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: s.cookieSecure(), SameSite: http.SameSiteLaxMode})
 	dest := "/signin?signed-out=1"
-	if !s.cfg.InsecureNoAuth {
+	if !s.cfg.InsecureNoAuth && !s.cfg.PasswordLogin() {
 		if _, err := s.auth.init(r.Context()); err == nil && s.auth.endSess != "" {
 			// RP-initiated logout: the IdP ends its session too, then sends
 			// the browser back to our landing page if it allows that URI.

@@ -10,20 +10,23 @@ import (
 )
 
 type statusResponse struct {
-	User            *User       `json:"user"`
-	Latest          *store.Scan `json:"latest"`
-	Active          *store.Scan `json:"active"`
-	NextScanAt      time.Time   `json:"nextScanAt"`
-	IntervalSeconds int         `json:"intervalSeconds"`
-	ScannerLastSeen *time.Time  `json:"scannerLastSeen"`
-	ScannerOnline   bool        `json:"scannerOnline"`
+	User *User `json:"user"`
+	// CanChangePassword: password login, so the UI offers a password change.
+	CanChangePassword bool        `json:"canChangePassword"`
+	Latest            *store.Scan `json:"latest"`
+	Active            *store.Scan `json:"active"`
+	NextScanAt        time.Time   `json:"nextScanAt"`
+	IntervalSeconds   int         `json:"intervalSeconds"`
+	ScannerLastSeen   *time.Time  `json:"scannerLastSeen"`
+	ScannerOnline     bool        `json:"scannerOnline"`
 	// LastSightingAt is when the passive listener last reported anything.
 	LastSightingAt *time.Time `json:"lastSightingAt"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	resp := statusResponse{User: userFrom(ctx), IntervalSeconds: int(s.cfg.ScanInterval.Seconds())}
+	resp := statusResponse{User: userFrom(ctx), IntervalSeconds: int(s.cfg.ScanInterval.Seconds()),
+		CanChangePassword: s.cfg.PasswordLogin()}
 	var err error
 	if resp.Latest, _, err = s.store.LatestGraph(ctx); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.serverError(w, "latest graph", err)

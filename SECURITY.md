@@ -16,7 +16,7 @@ homelabmap is two containers with deliberately different exposure.
 | Network | **host network** (it needs the LAN segment) | ordinary container network |
 | Listens on | **nothing** | UI on `:8080`; scanner API on `:8081` |
 | Privileges | non-root; `CAP_NET_RAW` + `CAP_NET_ADMIN` only, held as file capabilities by `nmap` and by `homelabmap-listen` (raw sockets only) | non-root, no capabilities |
-| Holds | SNMP, UniFi, Proxmox and Cosmos credentials | OIDC client, session store, scan history |
+| Holds | SNMP, UniFi, Proxmox and Cosmos credentials | OIDC client or the local account's password hash, session store, scan history |
 
 * **The scanner never accepts connections.** It long-polls the web
   container for work and posts results back, authenticated with a shared
@@ -26,9 +26,23 @@ homelabmap is two containers with deliberately different exposure.
   only as `127.0.0.1:8097` (as `compose.yaml` does). Anyone who can reach it
   with the token can feed the map false data.
 * **The UI requires login.** OpenID Connect authorization code flow with PKCE
-  (S256), state and nonce checks, and optional group restriction. Sessions
-  are random tokens stored hashed; cookies are `__Host-`, `HttpOnly`,
-  `Secure`, `SameSite=Lax`. State-changing requests are refused unless
+  (S256), state and nonce checks, and optional group restriction.
+* **Without OIDC, one local account.** It is created on first run, which
+  requires a one-time setup code printed in the web container's log, so a
+  visitor who reaches the page first can't claim it. The password (at least
+  12 characters) is stored as an Argon2id hash (64 MiB, 2 passes, random
+  salt). Unknown usernames take as long to reject as wrong passwords. After
+  10 failed attempts within 15 minutes, sign-in is refused until the window
+  passes; this counts globally, because behind a reverse proxy every client
+  shares the proxy's address. Changing the password requires the current
+  one and signs out the account's other sessions.
+* **Password reset needs host access, not email.** `homelabmap-web
+  reset-code`, run in the web container, prints a one-time code (60 bits,
+  valid 15 minutes, only the newest one works, stored as a hash) that the
+  sign-in page's "Forgot password?" form accepts. Wrong codes count as
+  failed sign-ins. A reset signs out every session of the account.
+* **Sessions** (both kinds of login) are random tokens stored hashed;
+  cookies are `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax`. State-changing requests are refused unless
   same-origin (`Sec-Fetch-Site`/`Origin`). A strict Content-Security-Policy
   allows only the app's own scripts. `HOMELABMAP_INSECURE_NO_AUTH` exists for
   local development and is refused unless the UI listens on loopback.
