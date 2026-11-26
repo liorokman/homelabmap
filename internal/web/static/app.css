@@ -295,7 +295,8 @@ table.data th[aria-sort="ascending"] button::after { content: " ▲"; }
 table.data th[aria-sort="descending"] button::after { content: " ▼"; }
 table.data th[aria-sort="ascending"] button, table.data th[aria-sort="descending"] button { color: var(--text); }
 table.data td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: nowrap; }
-table.data td.wrap { white-space: normal; min-width: 160px; max-width: 320px; }
+/* Long text stays on one line, cut off; the full text is the tooltip. */
+table.data td.clip { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 table.data td.mono, table.data td .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; white-space: nowrap; }
 table.data td.off { color: var(--muted); font-style: italic; }
 table.data td.bad-text { color: var(--danger); }
@@ -303,6 +304,28 @@ table.data tbody tr:hover { background: var(--surface-2); }
 table.data tr[data-row] { cursor: pointer; }
 table.data tr.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 table.data a { color: var(--accent); cursor: pointer; }
+/* Folded lists: the first item, then "+N more". */
+table.data .folded { display: flex; align-items: center; gap: 6px; }
+table.data .fold {
+  display: inline-block; flex: none; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface-2); color: var(--muted); font: inherit; font-size: 11px; line-height: 18px; cursor: pointer;
+}
+table.data .fold:hover, table.data .fold:focus-visible { color: var(--text); border-color: var(--muted); }
+/* Devices not seen recently, grouped at the end. */
+table.data tr.inactive td { color: var(--muted); }
+table.data tr.inactive td a { color: color-mix(in srgb, var(--accent) 65%, var(--muted)); }
+table.data tr.group th {
+  position: static; padding: 14px 10px 6px; background: var(--bg); color: var(--muted);
+  font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; text-align: left;
+}
+table.data tr.group:hover { background: none; }
+/* Column picker */
+.colpick { max-height: min(70vh, 480px); overflow: auto; min-width: 200px; }
+.colpick-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.colpick-item:hover { background: var(--surface-2); }
+.colpick-item:has(input:disabled) { color: var(--muted); cursor: default; }
+.colpick-foot { border-top: 1px solid var(--border); margin-top: 4px; padding: 6px 10px 2px; }
+.link-btn { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; }
 
 @media (max-width: 820px) {
   .controls { position: absolute; z-index: 4; inset: 0 auto 0 0; width: 240px; transform: translateX(-100%); }

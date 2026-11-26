@@ -112,6 +112,12 @@
         <button type="button" data-table="scans" aria-pressed="false">Scans</button>
       </div>
       <span id="table-count" class="src"></span>
+      <div class="menu" id="table-cols">
+        <button type="button" class="btn menu-button" id="table-cols-button" aria-haspopup="true" aria-expanded="false" aria-controls="table-cols-list">
+          Columns <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="menu-list colpick" id="table-cols-list" hidden></div>
+      </div>
       <button type="button" class="btn" id="table-csv">Download CSV</button>
     </div>
     <div class="table-scroll"></div>

@@ -250,5 +250,10 @@ func demoSightings(now time.Time) []obs.Sighting {
 		obs.Sighting{MAC: pmac(1), IP: "fe80::d842:7eff:fe00:101", Via: "ndp", At: now},
 		obs.Sighting{MAC: mac(desktop), IP: "fd00:42::50", Via: "ndp", At: now},
 	)
+	// The desktop uses IPv6 privacy extensions: a new temporary address
+	// every day.
+	for i := range 5 {
+		out = append(out, obs.Sighting{MAC: mac(desktop), IP: fmt.Sprintf("2001:db8:42:0:%x:%x:%x:%x", 0x1a2b+i*0x111, 0x3c4d+i*0x37, 0x5e6f-i*0x91, 0x7a8b+i*0x13), Via: "ndp", At: now.Add(-time.Duration(i) * 24 * time.Hour)})
+	}
 	return out
 }

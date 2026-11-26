@@ -33,7 +33,9 @@ access point, VMs and containers on their hosts, and Docker stacks.
 * **New devices appear within a minute:** the scanner listens for ARP and
   neighbour discovery and probes anything it hasn't seen before.
 * **Table view** of everything (devices, containers, links, what was heard,
-  scan history) with sorting and CSV export.
+  scan history) with sorting, a choice of columns and CSV export. Long
+  lists, such as IPv6 privacy addresses, fold to one line; devices not
+  seen recently are grouped at the end.
 * **Built for a home lab's security:** login via your OpenID Connect
   provider (PKCE) or a built-in account, a scanner that listens on no port and runs with only
   raw-socket rights, read-only credentials. See [SECURITY.md](SECURITY.md).

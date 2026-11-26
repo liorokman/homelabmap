@@ -17,15 +17,29 @@ function ipKey(ip) {
 
 const timeKey = (t) => (t ? new Date(t).getTime() : 0);
 
+// Columns hidden until the viewer picks their own. The first column of
+// each view is always shown.
+const DEFAULT_HIDDEN = {
+  devices: ['Earlier MACs', 'OS from', 'Model', 'DNS', 'Open ports', 'Sources', 'First seen'],
+};
+
+// Views whose rows can be absent: seen before, not in the latest scan.
+const HAS_ABSENT = new Set(['devices', 'containers', 'links']);
+
 export function createTable(ctx) {
   const { esc, dateTime, ago, roleName, kindName, powerLine, api, store } = ctx;
   const root = document.querySelector('#table-view');
   const body = root.querySelector('.table-scroll');
   const count = root.querySelector('#table-count');
+  const colsButton = root.querySelector('#table-cols-button');
+  const colsList = root.querySelector('#table-cols-list');
 
   const state = {
     view: fromSlug(ctx.initial) || (VIEWS.includes(store.get('table.view')) ? store.get('table.view') : 'devices'),
     sort: store.get('table.sort', {}),
+    hidden: store.get('table.hidden', {}),
+    open: new Set(), // folded cells the viewer opened: rowKey|column
+    rowByKey: new Map(),
     sightings: null,
     scans: null,
     loading: null,
@@ -40,9 +54,11 @@ export function createTable(ctx) {
   };
 
   // Column: label, text (display and CSV), optional html, sort key, class.
+  // A list column (items) shows its first item and folds the rest.
   const col = (label, text, opts = {}) => ({ label, text, ...opts });
   const list = (a) => (a || []).join(', ');
   const listHTML = (a, cls = '') => (a || []).map((x) => `<div class="${cls}">${esc(x)}</div>`).join('');
+  const listCol = (label, items, opts = {}) => col(label, (r) => list(items(r)), { items, ...opts });
 
   function columns(view) {
     switch (view) {
@@ -50,19 +66,19 @@ export function createTable(ctx) {
         return [
           col('Name', (n) => n.label, { html: (n) => `<a data-node="${esc(n.id)}">${esc(n.label)}</a>${n.new ? ' <span class="tag new">new</span>' : ''}` }),
           col('Type', (n) => roleName(n.role)),
-          col('Power', (n) => powerLine(n), { cls: (n) => (n.power === 'off' ? 'off' : ''), sort: (n) => (n.absent ? 2 : n.power === 'off' ? 1 : 0) }),
-          col('IPv4', (n) => list(n.ips), { html: (n) => listHTML(n.ips, 'mono'), sort: (n) => ipKey(n.ips?.[0]) }),
-          col('IPv6', (n) => list(n.ipv6), { html: (n) => listHTML(n.ipv6, 'mono'), sort: (n) => n.ipv6?.[0] || '~' }),
-          col('MAC', (n) => list(n.macs), { html: (n) => listHTML(n.macs, 'mono') }),
-          col('Earlier MACs', (n) => list(n.otherMacs), { html: (n) => listHTML(n.otherMacs, 'mono') }),
-          col('Vendor', (n) => n.vendor || '', { wrap: true }),
-          col('OS', (n) => n.os || '', { wrap: true }),
+          col('Power', (n) => (n.absent ? 'Not seen' : powerLine(n)), { cls: (n) => (n.power === 'off' ? 'off' : ''), sort: (n) => (n.absent ? 2 : n.power === 'off' ? 1 : 0) }),
+          listCol('IPv4', (n) => n.ips, { itemCls: 'mono', sort: (n) => ipKey(n.ips?.[0]) }),
+          listCol('IPv6', (n) => n.ipv6, { itemCls: 'mono', sort: (n) => n.ipv6?.[0] || '~' }),
+          listCol('MAC', (n) => n.macs, { itemCls: 'mono' }),
+          listCol('Earlier MACs', (n) => n.otherMacs, { itemCls: 'mono' }),
+          col('Vendor', (n) => n.vendor || '', { clip: true }),
+          col('OS', (n) => n.os || '', { clip: true }),
           col('OS from', (n) => n.osSource || ''),
-          col('Model', (n) => n.model || '', { wrap: true }),
-          col('Location', (n) => n.location || '', { wrap: true }),
-          col('DNS', (n) => list(n.dns), { html: (n) => listHTML(n.dns) }),
-          col('Open ports', (n) => list(n.openPorts), { html: (n) => listHTML(n.openPorts, 'mono') }),
-          col('Sources', (n) => list(n.sources), { wrap: true }),
+          col('Model', (n) => n.model || '', { clip: true }),
+          col('Location', (n) => n.location || '', { clip: true }),
+          listCol('DNS', (n) => n.dns),
+          listCol('Open ports', (n) => n.openPorts, { itemCls: 'mono' }),
+          col('Sources', (n) => list(n.sources), { clip: true }),
           col('First seen', (n) => dateTime(n.firstSeen), { sort: (n) => timeKey(n.firstSeen) }),
           col('Last seen', (n) => (n.lastSeen ? ago(n.lastSeen) : ''), { title: (n) => dateTime(n.lastSeen), sort: (n) => timeKey(n.lastSeen) }),
         ];
@@ -74,9 +90,9 @@ export function createTable(ctx) {
           col('State', (n) => (n.power === 'on' ? n.status || 'running' : n.powerState || 'stopped'), { cls: (n) => (n.power === 'off' ? 'off' : '') }),
           col('Image', (n) => n.image || '', { cls: () => 'mono' }),
           col('Network', (n) => n.network || ''),
-          col('Published', (n) => list(n.published), { html: (n) => listHTML(n.published, 'mono') }),
-          col('URL', (n) => list(n.urls), {
-            html: (n) => (n.urls || []).map((u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https:\/\//, ''))}</a></div>`).join(''),
+          listCol('Published', (n) => n.published, { itemCls: 'mono' }),
+          listCol('URL', (n) => n.urls, {
+            itemHTML: (u) => `<div><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https:\/\//, ''))}</a></div>`,
           }),
           col('Host', (n) => {
             const host = n.stack ? (ctx.graph()?.nodes || []).find((s) => s.id === n.stack)?.parent : n.parent;
@@ -122,7 +138,7 @@ export function createTable(ctx) {
           col('Devices', (s) => (s.status === 'done' ? String(s.nodes) : ''), { sort: (s) => s.nodes }),
           col('Links', (s) => (s.status === 'done' ? String(s.edges) : ''), { sort: (s) => s.edges }),
           col('Probed', (s) => (s.targets || []).map((t) => t.mac).join(', '), { cls: () => 'mono' }),
-          col('Error', (s) => s.error || '', { cls: () => 'bad-text', wrap: true }),
+          col('Error', (s) => s.error || '', { cls: () => 'bad-text', clip: true }),
         ];
     }
     return [];
@@ -160,20 +176,70 @@ export function createTable(ctx) {
     return [];
   }
 
+  // sorted applies the chosen sort; absent rows always come last, in the
+  // same order among themselves.
   function sorted(view, cols, data) {
     const s = state.sort[view];
     const c = s && cols.find((x) => x.label === s.col);
-    if (!c) return data;
-    const key = c.sort || c.text;
-    const dir = s.dir === 'desc' ? -1 : 1;
-    return [...data].sort((a, b) => {
-      const ka = key(a);
-      const kb = key(b);
-      const r = typeof ka === 'number' && typeof kb === 'number'
-        ? ka - kb
-        : String(ka).localeCompare(String(kb), undefined, { numeric: true, sensitivity: 'base' });
-      return r * dir;
-    });
+    let out = [...data];
+    if (c) {
+      const key = c.sort || c.text;
+      const dir = s.dir === 'desc' ? -1 : 1;
+      out.sort((a, b) => {
+        const ka = key(a);
+        const kb = key(b);
+        const r = typeof ka === 'number' && typeof kb === 'number'
+          ? ka - kb
+          : String(ka).localeCompare(String(kb), undefined, { numeric: true, sensitivity: 'base' });
+        return r * dir;
+      });
+    }
+    if (HAS_ABSENT.has(view)) out = [...out.filter((r) => !r.absent), ...out.filter((r) => r.absent)];
+    return out;
+  }
+
+  // ---------- columns ----------
+
+  function hiddenSet(view) {
+    return new Set(state.hidden[view] ?? DEFAULT_HIDDEN[view] ?? []);
+  }
+
+  function shownColumns(view) {
+    const hidden = hiddenSet(view);
+    return columns(view).filter((c, i) => i === 0 || !hidden.has(c.label));
+  }
+
+  function renderColumnPicker() {
+    const hidden = hiddenSet(state.view);
+    const items = columns(state.view).map((c, i) => {
+      const on = i === 0 || !hidden.has(c.label);
+      return `<label class="colpick-item"><input type="checkbox" data-col="${esc(c.label)}"${on ? ' checked' : ''}${i === 0 ? ' disabled' : ''}> ${esc(c.label.trim())}</label>`;
+    }).join('');
+    colsList.innerHTML = items + '<div class="colpick-foot"><button type="button" class="link-btn" data-col-reset>Reset to default</button></div>';
+  }
+
+  function setColumnsOpen(open) {
+    if (open) renderColumnPicker();
+    colsList.hidden = !open;
+    colsButton.setAttribute('aria-expanded', String(open));
+  }
+
+  // ---------- cells ----------
+
+  const rowKey = (r) => String(r.id ?? r.mac ?? '');
+
+  function cellHTML(c, r) {
+    if (!c.items) return c.html ? c.html(r) : esc(c.text(r));
+    const items = c.items(r) || [];
+    const one = c.itemHTML || ((x) => `<div class="${c.itemCls || ''}">${esc(x)}</div>`);
+    if (items.length <= 1) return items.map(one).join('');
+    const k = rowKey(r) + '|' + c.label;
+    if (state.open.has(k)) {
+      return items.map(one).join('') +
+        `<button type="button" class="fold" data-fold="${esc(k)}" aria-expanded="true">Show less</button>`;
+    }
+    // Folded: the first item and the button on one line.
+    return `<div class="folded">${one(items[0])}<button type="button" class="fold" data-fold="${esc(k)}" aria-expanded="false" title="${esc(items.slice(1).join('\n'))}">+${items.length - 1}</button></div>`;
   }
 
   function render() {
@@ -186,10 +252,12 @@ export function createTable(ctx) {
       refresh();
       return;
     }
-    const cols = columns(view);
-    const data = sorted(view, cols, rows(view));
+    const all = columns(view);
+    const cols = shownColumns(view);
+    const data = sorted(view, all, rows(view));
     const s = state.sort[view] || {};
-    count.textContent = `${data.length} ${data.length === 1 ? 'row' : 'rows'}`;
+    const absent = data.filter((r) => r.absent).length;
+    count.textContent = `${data.length} ${data.length === 1 ? 'row' : 'rows'}` + (absent ? `, ${absent} not seen recently` : '');
     if (!data.length) {
       const why = view === 'sightings'
         ? 'Nothing heard yet. The scanner reports ARP and IPv6 neighbour discovery as devices talk.'
@@ -201,13 +269,18 @@ export function createTable(ctx) {
       const aria = s.col === c.label ? (s.dir === 'desc' ? 'descending' : 'ascending') : 'none';
       return `<th scope="col" aria-sort="${aria}"><button type="button" data-sort="${esc(c.label)}">${esc(c.label.trim())}</button></th>`;
     }).join('');
-    const bodyRows = data.map((r) => {
+    state.rowByKey = new Map(data.map((r) => [rowKey(r), r]));
+    const bodyRows = data.map((r, i) => {
       const id = view === 'devices' ? r.id : '';
-      const sel = id && id === state.selected ? ' class="selected"' : '';
-      return `<tr${id ? ` data-row="${esc(id)}"` : ''}${sel}>` + cols.map((c) => {
-        const cls = [c.cls ? c.cls(r) : '', c.wrap ? 'wrap' : ''].filter(Boolean).join(' ');
-        const title = c.title ? ` title="${esc(c.title(r))}"` : '';
-        return `<td${cls ? ` class="${cls}"` : ''}${title}>${c.html ? c.html(r) : esc(c.text(r))}</td>`;
+      const trCls = [id && id === state.selected ? 'selected' : '', r.absent ? 'inactive' : ''].filter(Boolean).join(' ');
+      const group = r.absent && !data[i - 1]?.absent
+        ? `<tr class="group"><th colspan="${cols.length}" scope="rowgroup">Not seen recently (${absent})</th></tr>`
+        : '';
+      return group + `<tr data-key="${esc(rowKey(r))}"${id ? ` data-row="${esc(id)}"` : ''}${trCls ? ` class="${trCls}"` : ''}>` + cols.map((c) => {
+        const cls = [c.cls ? c.cls(r) : '', c.clip ? 'clip' : ''].filter(Boolean).join(' ');
+        const tip = c.title ? c.title(r) : c.clip ? c.text(r) : '';
+        const title = tip ? ` title="${esc(tip)}"` : '';
+        return `<td data-col="${esc(c.label)}"${cls ? ` class="${cls}"` : ''}${title}>${cellHTML(c, r)}</td>`;
       }).join('') + '</tr>';
     }).join('');
     body.innerHTML = `<table class="data"><thead><tr>${head}</tr></thead><tbody>${bodyRows}</tbody></table>`;
@@ -230,9 +303,10 @@ export function createTable(ctx) {
     return state.loading;
   }
 
+  // csv exports the shown columns, with lists in full.
   function csv() {
-    const cols = columns(state.view);
-    const data = sorted(state.view, cols, rows(state.view));
+    const cols = shownColumns(state.view);
+    const data = sorted(state.view, columns(state.view), rows(state.view));
     const cell = (v) => {
       const s = String(v ?? '');
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -248,9 +322,55 @@ export function createTable(ctx) {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
+  colsList.addEventListener('change', (e) => {
+    const box = e.target.closest('input[data-col]');
+    if (!box) return;
+    const hidden = hiddenSet(state.view);
+    if (box.checked) hidden.delete(box.dataset.col); else hidden.add(box.dataset.col);
+    state.hidden[state.view] = [...hidden];
+    store.set('table.hidden', state.hidden);
+    render();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!colsList.hidden && !e.target.closest('#table-cols')) setColumnsOpen(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !colsList.hidden) {
+      setColumnsOpen(false);
+      colsButton.focus();
+    }
+  });
+
   root.addEventListener('click', (e) => {
+    if (e.target.closest('#table-cols-button')) {
+      setColumnsOpen(colsList.hidden);
+      return;
+    }
+    if (e.target.closest('[data-col-reset]')) {
+      delete state.hidden[state.view];
+      store.set('table.hidden', state.hidden);
+      renderColumnPicker();
+      render();
+      return;
+    }
+    if (e.target.closest('#table-cols-list')) return;
+    const fold = e.target.closest('[data-fold]');
+    if (fold) {
+      const k = fold.dataset.fold;
+      if (state.open.has(k)) state.open.delete(k); else state.open.add(k);
+      const td = fold.closest('td');
+      const r = state.rowByKey.get(td.parentElement.dataset.key);
+      const c = columns(state.view).find((x) => x.label === td.dataset.col);
+      if (r && c) {
+        td.innerHTML = cellHTML(c, r);
+        td.querySelector('[data-fold]')?.focus();
+      }
+      return;
+    }
     const tab = e.target.closest('[data-table]');
     if (tab) {
+      setColumnsOpen(false);
       state.view = tab.dataset.table;
       store.set('table.view', state.view);
       render();
