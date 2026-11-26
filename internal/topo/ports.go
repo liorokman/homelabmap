@@ -160,9 +160,14 @@ func uniPortLabel(e *entity, n int) (string, int) {
 	if n <= 0 {
 		return "", 0
 	}
+	// UniFi counts physical ports from 1. That is often, but not always,
+	// the LLDP local port number; it is not an ifIndex, and on Linux-based
+	// UniFi devices ifIndex 1 is the loopback.
 	if d := e.dev(); d != nil {
 		if idx := lldpLocalIf(d, n); idx != 0 {
-			return portLabel(d, idx), idx
+			if i := findIf(d, idx); i == nil || !isVirtualIf(i.Name) {
+				return portLabel(d, idx), idx
+			}
 		}
 	}
 	return fmt.Sprintf("port %d", n), 0

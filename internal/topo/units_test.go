@@ -262,3 +262,49 @@ func TestPassiveHistoryOnNodes(t *testing.T) {
 		t.Errorf("ipv6 %v last seen %v", n.IPv6, n.LastSeen)
 	}
 }
+
+func TestUniPortLabelSkipsLoopback(t *testing.T) {
+	// A Linux-based AP: no LLDP local ports, ifIndex 1 is lo.
+	ap := &entity{snmp: []*obs.SNMPDevice{{Interfaces: []obs.Interface{
+		{Index: 1, Name: "lo"}, {Index: 2, Name: "eth0"},
+	}}}}
+	if label, idx := uniPortLabel(ap, 1); label != "port 1" || idx != 0 {
+		t.Errorf("uniPortLabel(ap, 1) = %q, %d; want \"port 1\", 0", label, idx)
+	}
+	sw := &entity{snmp: []*obs.SNMPDevice{{Interfaces: []obs.Interface{{Index: 7, Name: "0/7"}}}}}
+	if label, idx := uniPortLabel(sw, 7); label != "0/7" || idx != 7 {
+		t.Errorf("uniPortLabel(sw, 7) = %q, %d; want \"0/7\", 7", label, idx)
+	}
+}
+
+func TestAddLinkMerges(t *testing.T) {
+	sw, ap := &entity{}, &entity{}
+	t.Run("same switch port, different AP port names", func(t *testing.T) {
+		b := &builder{}
+		b.addLink(sw, 7, "0/7", ap, 0, "port 1", KindWired, "unifi", prioUniFi)
+		b.addLink(sw, 7, "0/7", ap, 2, "eth0", KindWired, "lldp", prioLLDP)
+		if len(b.links) != 1 {
+			t.Fatalf("got %d links, want 1", len(b.links))
+		}
+		l := b.links[0]
+		if l.bPort != "eth0" || l.bIf != 2 || !l.sources["unifi"] || !l.sources["lldp"] {
+			t.Errorf("merged link = %+v; want LLDP's eth0 and both sources", *l)
+		}
+	})
+	t.Run("lower priority doesn't rename", func(t *testing.T) {
+		b := &builder{}
+		b.addLink(sw, 7, "0/7", ap, 2, "eth0", KindWired, "lldp", prioLLDP)
+		b.addLink(ap, 1, "lo", sw, 7, "0/7", KindWired, "unifi", prioUniFi)
+		if len(b.links) != 1 || b.links[0].bPort != "eth0" {
+			t.Fatalf("links = %d, first %+v; want one link ending at eth0", len(b.links), *b.links[0])
+		}
+	})
+	t.Run("different ports at both ends are two cables", func(t *testing.T) {
+		b := &builder{}
+		b.addLink(sw, 9, "0/9", ap, 25, "gi25", KindWired, "lldp", prioLLDP)
+		b.addLink(sw, 10, "0/10", ap, 26, "gi26", KindWired, "lldp", prioLLDP)
+		if len(b.links) != 2 {
+			t.Errorf("got %d links, want 2", len(b.links))
+		}
+	})
+}

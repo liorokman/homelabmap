@@ -30,8 +30,14 @@ func portsCompatible(x string, xi int, y string, yi int) bool {
 	return x == "" || y == "" || normPort(x) == normPort(y)
 }
 
+// samePort is true when both sides name the same known interface.
+func samePort(xi, yi int) bool { return xi != 0 && xi == yi }
+
 // addLink records a connection, merging it with an existing one between the
-// same two entities when the ports don't contradict each other.
+// same two entities when the ports don't contradict each other. A port takes
+// one cable, so the same known interface at either end is also the same
+// link, whatever the other end is called: then the more trusted source's
+// name for that end wins.
 func (b *builder) addLink(a *entity, aIf int, aPort string, c *entity, cIf int, cPort, kind, src string, prio int) {
 	if a == nil || c == nil || a == c {
 		return
@@ -47,8 +53,19 @@ func (b *builder) addLink(a *entity, aIf int, aPort string, c *entity, cIf int, 
 		default:
 			continue
 		}
-		if !portsCompatible(l.aPort, l.aIf, lp, lIf) || !portsCompatible(l.bPort, l.bIf, rp, rIf) {
+		aOK := portsCompatible(l.aPort, l.aIf, lp, lIf)
+		bOK := portsCompatible(l.bPort, l.bIf, rp, rIf)
+		same := (aOK && bOK) || (aOK && samePort(l.aIf, lIf)) || (bOK && samePort(l.bIf, rIf))
+		if !same {
 			continue
+		}
+		if prio > l.prio {
+			if !aOK {
+				l.aPort, l.aIf = lp, lIf
+			}
+			if !bOK {
+				l.bPort, l.bIf = rp, rIf
+			}
 		}
 		if l.aPort == "" {
 			l.aPort, l.aIf = lp, lIf
