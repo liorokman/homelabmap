@@ -363,7 +363,9 @@ can't fingerprint; to try the real scanner, run its image with
 
 Publishing images: `task push VERSION=x.y.z` builds both images and pushes
 them with `crane` to `$HOMELABMAP_IMAGE_PREFIX-{web,scanner}`
-(`ghcr.io/liorokman/homelabmap-…` by default; log in to the registry first).
+(`ghcr.io/liorokman/homelabmap-…` by default; log in to the registry first),
+and points `latest` at them. Pass `VERSION` as a task variable as shown:
+without it, the version comes from `git describe` and `latest` isn't moved.
 
 ### Deploying on Cosmos
 

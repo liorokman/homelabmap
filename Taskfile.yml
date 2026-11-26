@@ -72,7 +72,7 @@ tasks:
         cmd: docker build --target {{.ITEM}} --build-arg VERSION={{.VERSION}} -t {{.IMAGE_PREFIX}}-{{.ITEM}}:{{.VERSION}} .
 
   push:
-    desc: "Build and push both images with crane (auth from ~/.docker/config.json)"
+    desc: "Build and push both images with crane (auth from ~/.docker/config.json); a release x.y.z also becomes latest"
     deps: [images]
     cmds:
       - mkdir -p out
@@ -80,6 +80,15 @@ tasks:
         cmd: |
           docker save -o out/{{.ITEM}}.tar {{.IMAGE_PREFIX}}-{{.ITEM}}:{{.VERSION}}
           crane push out/{{.ITEM}}.tar {{.IMAGE_PREFIX}}-{{.ITEM}}:{{.VERSION}}
+      # Only a plain release version moves latest, not a git describe
+      # version such as v0.6.0-3-gabc1234-dirty.
+      - for: { var: TARGETS }
+        cmd: |
+          if echo '{{.VERSION}}' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            crane tag {{.IMAGE_PREFIX}}-{{.ITEM}}:{{.VERSION}} latest
+          else
+            echo "{{.VERSION}} isn't a release version (x.y.z): latest not moved"
+          fi
 
   demo:
     desc: "Run the UI locally on fictional demo data: http://127.0.0.1:8090"
