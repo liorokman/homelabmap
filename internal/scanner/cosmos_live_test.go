@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+
+	"github.com/liorokman/homelabmap/internal/obs"
 )
 
 // TestLiveCosmos reads the real Cosmos API. Opt-in:
@@ -14,8 +16,7 @@ func TestLiveCosmos(t *testing.T) {
 	if out == "" {
 		t.Skip("set HOMELABMAP_LIVE_COSMOS_OUT (and HOMELABMAP_COSMOS_URL/TOKEN) to read the real Cosmos API")
 	}
-	cfg := Config{CosmosURL: os.Getenv("HOMELABMAP_COSMOS_URL"), CosmosToken: os.Getenv("HOMELABMAP_COSMOS_TOKEN")}
-	c, err := cosmosCollect(context.Background(), cfg)
+	c, err := cosmosCollect(context.Background(), obs.CosmosTarget{URL: os.Getenv("HOMELABMAP_COSMOS_URL"), Token: os.Getenv("HOMELABMAP_COSMOS_TOKEN")})
 	if err != nil {
 		t.Fatal(err)
 	}

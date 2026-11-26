@@ -76,12 +76,13 @@ func (s *Server) handleAgentJob(w http.ResponseWriter, r *http.Request) {
 // buildJob picks hosts whose OS is still a guess and that weren't
 // fingerprinted recently.
 func (s *Server) buildJob(ctx context.Context, sc *store.Scan) (obs.Job, error) {
-	job := obs.Job{ID: sc.ID, OSScanMax: s.cfg.OSScanMax}
+	set := s.settings()
+	job := obs.Job{ID: sc.ID, OSScanMax: set.Scan.OSScanMax, Settings: set.forScanner()}
 	if sc.Trigger == store.TriggerProbe {
 		job.Probe = sc.Targets
 		return job, nil
 	}
-	if s.cfg.OSScanMax == 0 {
+	if set.Scan.OSScanMax == 0 {
 		return job, nil
 	}
 	known, err := s.store.KnownMACs(ctx)
@@ -104,7 +105,7 @@ func (s *Server) buildJob(ctx context.Context, sc *store.Scan) (obs.Job, error) 
 	if err := json.Unmarshal(raw, &g); err != nil {
 		return job, err
 	}
-	cutoff := s.now().Add(-s.cfg.OSRescan)
+	cutoff := s.now().Add(-set.Scan.OSRescan.D())
 	for _, n := range g.Nodes {
 		if n.Infra || n.Absent || len(n.MACs) == 0 || !weakOS(n.OSSource) {
 			continue
@@ -113,7 +114,7 @@ func (s *Server) buildJob(ctx context.Context, sc *store.Scan) (obs.Job, error) 
 			continue
 		}
 		job.OSScanMACs = append(job.OSScanMACs, n.MACs[0])
-		if len(job.OSScanMACs) >= s.cfg.OSScanMax {
+		if len(job.OSScanMACs) >= set.Scan.OSScanMax {
 			break
 		}
 	}
@@ -205,7 +206,7 @@ func (s *Server) rebuildStaleGraphs(ctx context.Context) {
 		g := topo.Build(id, res, hist)
 		// The old version of this same map knows which devices it carried.
 		if old, err := s.store.Graph(ctx, id); err == nil {
-			topo.CarryOver(g, old, g.ScanStarted, s.cfg.ForgetAfter)
+			topo.CarryOver(g, old, g.ScanStarted, s.settings().Scan.ForgetAfter.D())
 		}
 		if err := s.store.UpdateGraph(ctx, id, g); err != nil {
 			s.log.Warn("updating graph", "scan", id, "err", err)
@@ -290,15 +291,15 @@ func (s *Server) handleAgentSightings(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "recording sightings", err)
 		return
 	}
-	if len(fresh) > 0 && s.cfg.ProbeMaxPerHour > 0 {
-		probe, accepted, err := s.store.EnqueueProbe(ctx, fresh, s.cfg.ProbeMaxPerHour, now)
+	if perHour := s.settings().Scan.ProbeMaxPerHour; len(fresh) > 0 && perHour > 0 {
+		probe, accepted, err := s.store.EnqueueProbe(ctx, fresh, perHour, now)
 		if err != nil {
 			s.serverError(w, "queueing probe", err)
 			return
 		}
 		if len(accepted) < len(fresh) {
 			s.log.Warn("probe budget exhausted; the next full scan will cover the rest",
-				"new", len(fresh), "accepted", len(accepted), "per_hour", s.cfg.ProbeMaxPerHour)
+				"new", len(fresh), "accepted", len(accepted), "per_hour", perHour)
 		}
 		if probe != nil {
 			s.log.Info("new device heard; probe queued", "scan", probe.ID, "macs", accepted)
@@ -338,5 +339,5 @@ func (s *Server) carryOver(ctx context.Context, g *topo.Graph) {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.log.Warn("loading previous map; absent devices not carried this time", "err", err)
 	}
-	topo.CarryOver(g, prev, s.now(), s.cfg.ForgetAfter)
+	topo.CarryOver(g, prev, s.now(), s.settings().Scan.ForgetAfter.D())
 }

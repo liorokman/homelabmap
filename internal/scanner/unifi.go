@@ -61,25 +61,25 @@ func redactURL(u string) string {
 }
 
 // unifiCollect reads devices and clients from a UniFi OS console.
-func unifiCollect(ctx context.Context, cfg Config) (*obs.UniFi, error) {
-	c := httpClient(cfg.UniFiInsecureTLS)
-	hdr := map[string]string{"X-API-KEY": cfg.UniFiAPIKey}
+func unifiCollect(ctx context.Context, t obs.UniFiTarget) (*obs.UniFi, error) {
+	c := httpClient(t.InsecureTLS)
+	hdr := map[string]string{"X-API-KEY": t.APIKey}
 
 	// The classic Network API has switch ports, AP associations and
 	// fingerprints. Newer consoles accept API keys on it too.
-	legacy, lerr := unifiLegacy(ctx, c, cfg, hdr)
+	legacy, lerr := unifiLegacy(ctx, c, t, hdr)
 	if legacy != nil {
 		return legacy, lerr // lerr: only the optional extras failed
 	}
-	integ, ierr := unifiIntegration(ctx, c, cfg, hdr)
+	integ, ierr := unifiIntegration(ctx, c, t, hdr)
 	if ierr == nil {
 		return integ, nil
 	}
 	return nil, errors.Join(fmt.Errorf("classic API: %w", lerr), fmt.Errorf("integration API: %w", ierr))
 }
 
-func unifiLegacy(ctx context.Context, c *http.Client, cfg Config, hdr map[string]string) (*obs.UniFi, error) {
-	base := cfg.UniFiURL + "/proxy/network/api/s/" + url.PathEscape(cfg.UniFiSite)
+func unifiLegacy(ctx context.Context, c *http.Client, t obs.UniFiTarget, hdr map[string]string) (*obs.UniFi, error) {
+	base := t.URL + "/proxy/network/api/s/" + url.PathEscape(t.Site)
 	var dev, sta struct {
 		Meta struct {
 			RC  string `json:"rc"`
@@ -114,9 +114,9 @@ func unifiLegacy(ctx context.Context, c *http.Client, cfg Config, hdr map[string
 	} else {
 		u.Known = known.Data
 	}
-	if cfg.UniFiHistoryHours > 0 {
+	if t.HistoryHours > 0 {
 		h := fmt.Sprintf("%s/proxy/network/v2/api/site/%s/clients/history?onlyNonBlocked=true&includeUnifiDevices=false&withinHours=%d",
-			cfg.UniFiURL, url.PathEscape(cfg.UniFiSite), cfg.UniFiHistoryHours)
+			t.URL, url.PathEscape(t.Site), t.HistoryHours)
 		if err := getJSON(ctx, c, h, hdr, &u.History); err != nil {
 			errs = append(errs, fmt.Errorf("client history: %w", err))
 		}
@@ -132,8 +132,8 @@ type integPage struct {
 	Data       []json.RawMessage `json:"data"`
 }
 
-func unifiIntegration(ctx context.Context, c *http.Client, cfg Config, hdr map[string]string) (*obs.UniFi, error) {
-	base := cfg.UniFiURL + "/proxy/network/integration/v1"
+func unifiIntegration(ctx context.Context, c *http.Client, t obs.UniFiTarget, hdr map[string]string) (*obs.UniFi, error) {
+	base := t.URL + "/proxy/network/integration/v1"
 	var sites struct {
 		Data []struct {
 			ID                string `json:"id"`
@@ -146,13 +146,13 @@ func unifiIntegration(ctx context.Context, c *http.Client, cfg Config, hdr map[s
 	}
 	siteID := ""
 	for _, s := range sites.Data {
-		if s.InternalReference == cfg.UniFiSite || s.Name == cfg.UniFiSite || len(sites.Data) == 1 {
+		if s.InternalReference == t.Site || s.Name == t.Site || len(sites.Data) == 1 {
 			siteID = s.ID
 			break
 		}
 	}
 	if siteID == "" {
-		return nil, fmt.Errorf("site %q not found", cfg.UniFiSite)
+		return nil, fmt.Errorf("site %q not found", t.Site)
 	}
 	sbase := base + "/sites/" + url.PathEscape(siteID)
 

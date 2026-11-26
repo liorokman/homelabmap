@@ -63,13 +63,19 @@ func Build(scanID int64, res *obs.Result, hist History) *Graph {
 	for _, s := range res.OSScans {
 		b.osScans[s.MAC] = s
 	}
-	b.udevs, b.uclis = parseUniFi(res.UniFi)
+	for i := range res.UniFi {
+		devs, clis := parseUniFi(&res.UniFi[i])
+		b.udevs, b.uclis = append(b.udevs, devs...), append(b.uclis, clis...)
+	}
 	connected := map[string]bool{}
 	for _, c := range b.uclis {
 		connected[c.MAC] = true
 	}
-	b.uclis = append(b.uclis, parseUniFiHistory(res.UniFi, connected)...)
-	b.known = parseUniFiKnown(res.UniFi)
+	b.known = map[string]uniKnown{}
+	for i := range res.UniFi {
+		b.uclis = append(b.uclis, parseUniFiHistory(&res.UniFi[i], connected)...)
+		maps.Copy(b.known, parseUniFiKnown(&res.UniFi[i]))
+	}
 
 	b.buildIPMAC()
 	b.buildEntities()

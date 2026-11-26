@@ -252,7 +252,7 @@ func TestSNMPCollect(t *testing.T) {
 	useAgents(t, map[string]*fakeAgent{"192.0.2.10": switchAgent(), "192.0.2.12": newAgent().str(oidSysObjectID, "x").str(oidSysDescr, "Example LaserPrinter"), "192.0.2.13": noSys})
 	errs := &errSink{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	got := snmpCollect(context.Background(), SNMPConfig{Concurrency: 2}, []string{"192.0.2.13", "192.0.2.12", "192.0.2.10", "192.0.2.99"}, errs, log)
+	got := snmpCollect(context.Background(), SNMPConfig{Version: "2c", Community: "public", Concurrency: 2}, []string{"192.0.2.13", "192.0.2.12", "192.0.2.10", "192.0.2.99"}, errs, log)
 	if len(got) != 2 || got[0].IP != "192.0.2.10" || got[1].IP != "192.0.2.12" {
 		t.Fatalf("collected %+v", got)
 	}

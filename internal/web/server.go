@@ -5,10 +5,12 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,10 +38,22 @@ type Server struct {
 	wake chan struct{}
 	// longPoll is how long an agent poll waits for work.
 	longPoll time.Duration
+
+	// cur is the current settings (decrypted); settingsMu serialises
+	// changes. box encrypts their secrets at rest.
+	cur        atomic.Pointer[Settings]
+	settingsMu sync.Mutex
+	box        *secretBox
 }
 
-func New(cfg Config, st *store.Store, log *slog.Logger) *Server {
-	return &Server{
+// New makes the server and loads its settings, storing the first ones
+// (from the environment) on first start.
+func New(cfg Config, st *store.Store, log *slog.Logger) (*Server, error) {
+	box, err := newSecretBox(cfg.AgentToken)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{
 		cfg:   cfg,
 		store: st,
 		log:   log,
@@ -49,7 +63,19 @@ func New(cfg Config, st *store.Store, log *slog.Logger) *Server {
 		wake:  make(chan struct{}, 1),
 
 		longPoll: 25 * time.Second,
+		box:      box,
 	}
+	if err := s.loadSettings(context.Background()); err != nil {
+		return nil, fmt.Errorf("loading settings: %w", err)
+	}
+	return s, nil
+}
+
+// scannerOnline: the scanner polled recently (it re-polls at least every
+// long-poll period).
+func (s *Server) scannerOnline() bool {
+	seen := s.scannerSeen.Load()
+	return seen != 0 && s.now().Sub(time.Unix(seen, 0)) < 2*s.longPoll
 }
 
 func (s *Server) notifyAgent() {
@@ -93,6 +119,9 @@ func (s *Server) UIHandler() http.Handler {
 	app.HandleFunc("GET /api/scans", s.handleScans)
 	app.HandleFunc("GET /api/sightings", s.handleSightings)
 	app.HandleFunc("POST /api/scan", s.handleScanNow)
+	app.HandleFunc("GET /settings", func(w http.ResponseWriter, r *http.Request) { http.ServeFileFS(w, r, static, "settings.html") })
+	app.HandleFunc("GET /api/settings", s.requireAdmin(s.handleGetSettings))
+	app.HandleFunc("PUT /api/settings", s.requireAdmin(s.handlePutSettings))
 	if s.cfg.PasswordLogin() {
 		app.HandleFunc("POST /api/password", s.handleChangePassword)
 	}
@@ -109,6 +138,8 @@ func (s *Server) AgentHandler() http.Handler {
 	mux.HandleFunc("GET /agent/v1/job", s.handleAgentJob)
 	mux.HandleFunc("POST /agent/v1/result", s.handleAgentResult)
 	mux.HandleFunc("POST /agent/v1/sightings", s.handleAgentSightings)
+	mux.HandleFunc("GET /agent/v1/settings", s.handleAgentSettings)
+	mux.HandleFunc("POST /agent/v1/legacy-settings", s.handleAgentLegacy)
 	return s.requireAgent(mux)
 }
 

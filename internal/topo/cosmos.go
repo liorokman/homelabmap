@@ -15,10 +15,15 @@ import (
 // containers under the host. The UI shows either the stacks or, with
 // stacks opened, the containers grouped inside them.
 func (b *builder) addCosmos(g *Graph) {
-	cz := b.res.Cosmos
-	if cz == nil {
-		return
+	for i := range b.res.Cosmos {
+		b.addCosmosServer(g, &b.res.Cosmos[i], len(b.res.Cosmos) > 1)
 	}
+}
+
+// addCosmosServer adds one Cosmos server's containers. With several
+// servers, node IDs carry the host's, since stack and container names only
+// need to be unique per server.
+func (b *builder) addCosmosServer(g *Graph, cz *obs.Cosmos, several bool) {
 	host := b.cosmosHost(cz)
 	routes := cosmosURLs(cz.Routes)
 	b.addProxyURLs(g, routes)
@@ -30,6 +35,10 @@ func (b *builder) addCosmos(g *Graph) {
 	}
 	hostNode := &g.Nodes[slices.IndexFunc(g.Nodes, func(n Node) bool { return n.ID == host.nodeID })]
 	hostLabel := hostNode.Label
+	prefix := ""
+	if several {
+		prefix = sanitizeID(host.nodeID) + "-"
+	}
 
 	stacks := map[string][]obs.CosmosContainer{}
 	for _, c := range cz.Containers {
@@ -53,14 +62,14 @@ func (b *builder) addCosmos(g *Graph) {
 	}
 	for _, name := range names {
 		members := stacks[name]
-		id := "stack-" + sanitizeID(name)
+		id := prefix + "stack-" + sanitizeID(name)
 		running := 0
 		var memberIDs, urls []string
 		for _, c := range members {
 			if c.State == "running" {
 				running++
 			}
-			memberIDs = append(memberIDs, containerID(c.Name))
+			memberIDs = append(memberIDs, prefix+containerID(c.Name))
 			for _, u := range routes[c.Name] {
 				if !slices.Contains(urls, u) {
 					urls = append(urls, u)
@@ -84,8 +93,10 @@ func (b *builder) addCosmos(g *Graph) {
 	}
 	for _, c := range cz.Containers {
 		n := b.containerNode(c, routes[c.Name], hostLabel)
+		n.ID = prefix + n.ID
 		if inStack(c) {
-			n.Stack, n.Parent, n.Depth = "stack-"+sanitizeID(c.Stack), "stack-"+sanitizeID(c.Stack), hostNode.Depth+2
+			sid := prefix + "stack-" + sanitizeID(c.Stack)
+			n.Stack, n.Parent, n.Depth = sid, sid, hostNode.Depth+2
 			n.Location = "stack " + c.Stack + " on " + hostLabel
 		} else {
 			n.Parent, n.Depth = host.nodeID, hostNode.Depth+1

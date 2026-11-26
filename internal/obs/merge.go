@@ -48,7 +48,7 @@ func MergeProbe(base, probe *Result) *Result {
 	}
 	maps.Copy(out.DNS, probe.DNS)
 
-	if probe.UniFi != nil {
+	if len(probe.UniFi) > 0 {
 		out.UniFi = probe.UniFi
 	}
 	if probe.PVE != nil {

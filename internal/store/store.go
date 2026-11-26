@@ -122,6 +122,15 @@ var migrations = []string{
 		code_hash  TEXT PRIMARY KEY,
 		expires_at INTEGER NOT NULL
 	);`,
+	// 5: the Settings page, and who may open it.
+	`CREATE TABLE settings (
+		id               INTEGER PRIMARY KEY CHECK (id = 1),
+		doc              TEXT    NOT NULL,
+		version          INTEGER NOT NULL,
+		scanner_imported INTEGER NOT NULL DEFAULT 0,
+		updated_at       INTEGER NOT NULL
+	);
+	ALTER TABLE sessions ADD COLUMN admin INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (creating if needed) and migrates the database.

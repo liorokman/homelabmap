@@ -76,7 +76,24 @@ func run(listen, agent string, noAuth bool) error {
 		Retention: 14 * 24 * time.Hour, OSRescan: 7 * 24 * time.Hour, ForgetAfter: 30 * 24 * time.Hour,
 	}
 	go playScanner(ctx, "http://"+agent, log)
-	srv := web.New(cfg, st, log)
+	srv, err := web.New(cfg, st, log)
+	if err != nil {
+		return err
+	}
+	// Fictional settings to match the demo network (the demo plays the
+	// scanner itself, so nothing uses these credentials).
+	//nolint:gosec // fictional demo credentials
+	if err := srv.EditSettings(ctx, func(s *web.Settings) {
+		s.Scan.Subnets = []string{subnet}
+		s.SNMP.Default = web.SNMPCred{Version: "2c", Community: "demo-community"}
+		s.SNMP.Hosts = []web.SNMPHostEntry{{Match: "core-switch.home.arpa", Description: "Core switch in the rack", Credentials: web.SNMPCred{
+			Version: "3", User: "demo", AuthProto: "SHA256", AuthPass: "demo-auth-pass", PrivProto: "AES", PrivPass: "demo-priv-pass"}}}
+		s.Proxmox = []web.ProxmoxEntry{{Host: "pve1.home.arpa", Description: "Homelab cluster", TokenID: "homelabmap@pve!scanner", TokenSecret: "demo-token-secret"}}
+		s.UniFi = []web.UniFiEntry{{Host: "unifi.home.arpa", Description: "Cloud Gateway", APIKey: "demo-api-key", Site: "default", HistoryHours: 720}}
+		s.Cosmos = []web.CosmosEntry{{Host: "apps.home.arpa", Description: "Main Cosmos host", Token: "demo-cosmos-token"}}
+	}); err != nil {
+		return err
+	}
 	fmt.Printf("homelabmap demo: http://%s (Ctrl-C to stop)\n", listen)
 	if !noAuth {
 		fmt.Printf("\nFirst visit: create the account with setup code %s\n", srv.SetupCode())

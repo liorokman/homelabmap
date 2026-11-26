@@ -143,7 +143,8 @@ func privProto(s string) gosnmp.SnmpV3PrivProtocol {
 	}
 }
 
-// snmpCollect probes every target and fully walks the ones that answer.
+// snmpCollect probes every target that has credentials (an override or the
+// default, see SNMPConfig.forIP) and fully walks the ones that answer.
 func snmpCollect(ctx context.Context, c SNMPConfig, targets []string, errs *errSink, log *slog.Logger) []obs.SNMPDevice {
 	var (
 		mu         sync.Mutex
@@ -151,7 +152,13 @@ func snmpCollect(ctx context.Context, c SNMPConfig, targets []string, errs *errS
 		wg         sync.WaitGroup
 		sem        = make(chan struct{}, max(c.Concurrency, 1))
 	)
+	creds := map[string]SNMPConfig{}
 	for _, ip := range targets {
+		if tc, ok := c.forIP(ip); ok {
+			creds[ip] = tc
+		}
+	}
+	for ip, tc := range creds {
 		wg.Go(func() {
 			select {
 			case sem <- struct{}{}:
@@ -159,7 +166,7 @@ func snmpCollect(ctx context.Context, c SNMPConfig, targets []string, errs *errS
 				return
 			}
 			defer func() { <-sem }()
-			if snmpProbe(ctx, c, ip) {
+			if snmpProbe(ctx, tc, ip) {
 				mu.Lock()
 				responders = append(responders, ip)
 				mu.Unlock()
@@ -168,7 +175,7 @@ func snmpCollect(ctx context.Context, c SNMPConfig, targets []string, errs *errS
 	}
 	wg.Wait()
 	slices.Sort(responders)
-	log.Debug("snmp probe done", "targets", len(targets), "responders", len(responders))
+	log.Debug("snmp probe done", "targets", len(targets), "with_credentials", len(creds), "responders", len(responders))
 
 	out := make([]obs.SNMPDevice, len(responders))
 	walkSem := make(chan struct{}, 6)
@@ -181,7 +188,7 @@ func snmpCollect(ctx context.Context, c SNMPConfig, targets []string, errs *errS
 			}
 			defer func() { <-walkSem }()
 			start := time.Now()
-			out[i] = snmpWalkDevice(ctx, c, ip)
+			out[i] = snmpWalkDevice(ctx, creds[ip], ip)
 			log.Debug("snmp walk", "ip", ip, "name", out[i].SysName, "took", time.Since(start).Round(time.Millisecond),
 				"lldp", len(out[i].LLDP), "fdb", len(out[i].FDB), "arp", len(out[i].ARP))
 			for _, e := range out[i].Errors {

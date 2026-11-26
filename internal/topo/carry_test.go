@@ -133,7 +133,7 @@ func TestUniFiHistoryAliasesAndSSDP(t *testing.T) {
 			{IP: "10.20.23.149", MAC: "00:09:b0:00:00:13", Vendor: "D&M Holdings Inc."},
 			{IP: "10.20.23.66", MAC: "00:11:22:33:44:20"},
 		},
-		UniFi: &obs.UniFi{Flavor: "legacy",
+		UniFi: obs.UniFiList{{Flavor: "legacy",
 			Devices: []json.RawMessage{raw(map[string]any{"mac": ap, "ip": "10.20.23.89", "name": "Office", "type": "uap", "model": "UAP6MP"})},
 			Clients: []json.RawMessage{
 				raw(map[string]any{"mac": "da:00:00:00:00:01", "ip": "10.20.23.173", "hostname": "Alex-s-S25", "is_wired": false, "ap_mac": ap,
@@ -156,7 +156,7 @@ func TestUniFiHistoryAliasesAndSSDP(t *testing.T) {
 				// Connected right now: history doesn't override it.
 				raw(map[string]any{"mac": "00:11:22:33:44:20", "hostname": "stale", "type": "WIRED"}),
 			},
-		},
+		}},
 		SSDP: []obs.SSDPDevice{{IP: "10.20.23.149", FriendlyName: "Denon AVR-X1700H 5A3C1F", Manufacturer: "D&M Holdings",
 			ModelName: "AVR-X1700H", DeviceType: "urn:schemas-upnp-org:device:MediaRenderer:2", Server: "Linux/3.19.0 UPnP/1.0 GUPnP/0.20.13"}},
 	}
@@ -219,12 +219,12 @@ func TestLocalVariantsFoldIntoHost(t *testing.T) {
 	res := &obs.Result{Subnets: []string{"10.0.0.0/24"}, Sweep: []obs.SweepHost{
 		{IP: "10.0.0.2", MAC: "d8:3b:42:cb:0a:e6"},
 		{IP: "10.0.0.9", MAC: "d8:3b:42:d2:ee:4f"}, // another box, different prefix
-	}, UniFi: &obs.UniFi{Flavor: "legacy", Clients: []json.RawMessage{
+	}, UniFi: obs.UniFiList{{Flavor: "legacy", Clients: []json.RawMessage{
 		raw(map[string]any{"mac": "da:3b:42:cb:0a:e6", "is_wired": true}), // exact variant
 		raw(map[string]any{"mac": "da:3b:42:cb:0a:f3", "is_wired": true}), // second port of the same NIC
 		raw(map[string]any{"mac": "da:3b:42:d2:ee:d1", "is_wired": true}), // prefix shared by no burned-in MAC... except 10.0.0.9's
 		raw(map[string]any{"mac": "da:a1:19:00:00:01", "is_wired": false}),
-	}}}
+	}}}}
 	g := Build(1, res, History{})
 	owner := map[string]string{}
 	for _, n := range g.Nodes {

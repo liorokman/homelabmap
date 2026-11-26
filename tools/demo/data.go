@@ -131,9 +131,9 @@ func demoResult(jobID int64, started, finished time.Time) *obs.Result {
 		{IP: ip(printer), SysName: "printer", SysDescr: "Example LaserJet 400 series", SysObjectID: "1.3.6.1.4.1.11.2.3.9.1", IsPrinter: true},
 	}
 
-	res.UniFi = demoUniFi(started)
+	res.UniFi = obs.UniFiList{*demoUniFi(started)}
 	res.PVE = demoPVE()
-	res.Cosmos = demoCosmos(started)
+	res.Cosmos = obs.CosmosList{*demoCosmos(started)}
 	res.SSDP = []obs.SSDPDevice{
 		{IP: ip(60), FriendlyName: "Den TV", Manufacturer: "LG Electronics", ModelName: "Smart TV",
 			DeviceType: "urn:schemas-upnp-org:device:MediaRenderer:1", Server: "Linux/4.4 UPnP/1.0 WebOS TV/1.0"},

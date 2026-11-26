@@ -16,7 +16,7 @@ func TestMergeProbe(t *testing.T) {
 		},
 		OSScans: []OSScan{{MAC: "00:00:00:00:00:01", Name: "old"}},
 		DNS:     map[string]string{"10.0.0.1": "gw"},
-		UniFi:   &UniFi{Flavor: "legacy"},
+		UniFi:   UniFiList{{Flavor: "legacy"}},
 		SNMP:    []SNMPDevice{{IP: "10.0.0.1"}},
 		Errors:  []string{"base"},
 	}
@@ -37,7 +37,7 @@ func TestMergeProbe(t *testing.T) {
 	if len(m.OSScans) != 2 || m.DNS["10.0.0.1"] != "gw" || m.DNS["10.0.0.5"] != "phone" {
 		t.Errorf("os/dns: %+v %+v", m.OSScans, m.DNS)
 	}
-	if m.UniFi == nil || len(m.SNMP) != 1 || len(m.Errors) != 2 {
+	if len(m.UniFi) != 1 || len(m.SNMP) != 1 || len(m.Errors) != 2 {
 		t.Errorf("kept base collectors: %+v", m)
 	}
 	if len(base.Sweep) != 3 || len(base.DNS) != 1 || len(base.Errors) != 1 {

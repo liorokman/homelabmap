@@ -3,7 +3,9 @@
 // It runs on the host network (nmap needs raw sockets and the local segment)
 // and has no listening sockets: it long-polls the frontend for jobs.
 //
-// With -once it runs a single scan and writes the JSON result to stdout or
+// What to scan, and the credentials, come from the web's Settings page with
+// each job. With -once it instead reads them from the old HOMELABMAP_*
+// variables, runs a single scan and writes the JSON result to stdout or
 // -out, without contacting the frontend (useful for testing).
 package main
 
@@ -45,6 +47,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if *once {
+		// No web to ask: the scan settings come from the environment.
+		legacy, err := scanner.LegacySettings()
+		if err != nil {
+			return err
+		}
+		if cfg, err = cfg.WithSettings(legacy.Settings); err != nil {
+			return err
+		}
+		if len(cfg.Subnets) == 0 {
+			return errors.New("-once needs HOMELABMAP_SUBNETS")
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -67,12 +82,9 @@ func run() error {
 	if cfg.AgentToken == "" {
 		return fmt.Errorf("HOMELABMAP_AGENT_TOKEN is required")
 	}
-	log.Info("homelabmap-scanner starting", "version", scanner.Version, "server", cfg.Server, "subnets", cfg.Subnets,
-		"unifi", cfg.UniFiURL != "", "pve", cfg.PVEURL != "", "nmap_privileged", cfg.NmapPrivileged, "passive", cfg.Passive)
+	log.Info("homelabmap-scanner starting", "version", scanner.Version, "server", cfg.Server, "nmap_privileged", cfg.NmapPrivileged)
 	agent := scanner.NewAgent(cfg, log)
-	if cfg.Passive {
-		go agent.Watch(ctx)
-	}
+	go agent.WatchLoop(ctx)
 	if err := agent.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

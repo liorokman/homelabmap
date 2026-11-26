@@ -37,6 +37,8 @@ type User struct {
 	Subject string `json:"subject"`
 	Name    string `json:"name"`
 	Email   string `json:"email"`
+	// Admin may open the Settings page.
+	Admin bool `json:"admin"`
 }
 
 func userFrom(ctx context.Context) *User {
@@ -226,9 +228,10 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		name = claims.PreferredUsername
 	}
 	sid := randomToken()
-	exp := s.now().Add(s.cfg.SessionTTL)
+	exp := s.now().Add(s.settings().Login.SessionTTL.D())
+	admin := slices.ContainsFunc(claims.Groups, func(g string) bool { return slices.Contains(s.cfg.OIDCAdminGroups, g) })
 	if err := s.store.CreateSession(ctx, hashToken(sid), store.Session{
-		Subject: idt.Subject, Name: name, Email: claims.Email, ExpiresAt: exp,
+		Subject: idt.Subject, Name: name, Email: claims.Email, Admin: admin, ExpiresAt: exp,
 	}, s.now()); err != nil {
 		s.serverError(w, "creating session", err)
 		return
@@ -274,7 +277,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.cfg.InsecureNoAuth {
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, &User{Subject: "dev", Name: devUserName})))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, &User{Subject: "dev", Name: devUserName, Admin: true})))
 			return
 		}
 		u, ok, err := s.sessionUser(r)
@@ -308,12 +311,12 @@ func (s *Server) sessionUser(r *http.Request) (*User, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	return &User{Subject: sess.Subject, Name: sess.Name, Email: sess.Email}, true, nil
+	return &User{Subject: sess.Subject, Name: sess.Name, Email: sess.Email, Admin: s.isAdmin(sess)}, true, nil
 }
 
 func (s *Server) currentUser(r *http.Request) (*User, bool) {
 	if s.cfg.InsecureNoAuth {
-		return &User{Subject: "dev", Name: devUserName}, true
+		return &User{Subject: "dev", Name: devUserName, Admin: true}, true
 	}
 	u, ok, err := s.sessionUser(r)
 	return u, ok && err == nil

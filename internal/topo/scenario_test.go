@@ -182,7 +182,7 @@ func scenario(withUniFi bool) *obs.Result {
 	}
 	if withUniFi {
 		raw := func(v any) json.RawMessage { b, _ := json.Marshal(v); return b }
-		res.UniFi = &obs.UniFi{
+		res.UniFi = obs.UniFiList{{
 			Flavor: "legacy",
 			Devices: []json.RawMessage{
 				raw(map[string]any{"mac": macAcc, "ip": ipAcc, "name": "USW-24", "model": "US24P250", "type": "usw", "version": "6.6.61"}),
@@ -197,7 +197,7 @@ func scenario(withUniFi bool) *obs.Result {
 				raw(map[string]any{"mac": macPhone, "ip": ipPhone, "hostname": "Pixel-8", "is_wired": false, "ap_mac": macHallway, "essid": "Home"}),
 				raw(map[string]any{"mac": macTV, "ip": ipTV, "hostname": "BRAVIA-XR", "is_wired": true, "sw_mac": macLite, "sw_port": 6}),
 			},
-		}
+		}}
 	}
 	return res
 }

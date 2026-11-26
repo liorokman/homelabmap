@@ -7,6 +7,7 @@
 package obs
 
 import (
+	"bytes"
 	"encoding/json"
 	"net"
 	"strings"
@@ -25,6 +26,9 @@ type Job struct {
 	// Probe, when set, asks for a quick look at just these devices instead
 	// of a full scan (new MACs heard by the passive listener).
 	Probe []ProbeTarget `json:"probe,omitempty"`
+	// Settings is what to scan and with which credentials, as configured
+	// on the web's Settings page when the job was handed out.
+	Settings *ScannerSettings `json:"settings,omitempty"`
 }
 
 // ProbeTarget is one newly heard device.
@@ -58,11 +62,11 @@ type Result struct {
 	Self    Self              `json:"self"`
 	Sweep   []SweepHost       `json:"sweep"`
 	SNMP    []SNMPDevice      `json:"snmp"`
-	UniFi   *UniFi            `json:"unifi,omitempty"`
+	UniFi   UniFiList         `json:"unifi,omitempty"`
 	PVE     *PVE              `json:"pve,omitempty"`
 	OSScans []OSScan          `json:"osScans,omitempty"`
 	SSDP    []SSDPDevice      `json:"ssdp,omitempty"`
-	Cosmos  *Cosmos           `json:"cosmos,omitempty"`
+	Cosmos  CosmosList        `json:"cosmos,omitempty"`
 	DNS     map[string]string `json:"dns,omitempty"` // IP -> PTR name
 	// Errors are non-fatal collector problems, shown in the UI.
 	Errors []string `json:"errors,omitempty"`
@@ -176,6 +180,38 @@ type UniFi struct {
 	Known []json.RawMessage `json:"known,omitempty"`
 	// History is clients seen recently but not connected now (v2 API).
 	History []json.RawMessage `json:"history,omitempty"`
+}
+
+// UniFiList is one entry per UniFi controller. Results stored before
+// several controllers were supported hold a single object; it decodes as a
+// list of one.
+type UniFiList []UniFi
+
+func (l *UniFiList) UnmarshalJSON(b []byte) error { return decodeOneOrMany(b, (*[]UniFi)(l)) }
+
+// CosmosList is one entry per Cosmos server (a single object in older
+// stored results).
+type CosmosList []Cosmos
+
+func (l *CosmosList) UnmarshalJSON(b []byte) error { return decodeOneOrMany(b, (*[]Cosmos)(l)) }
+
+// decodeOneOrMany decodes a JSON array, or a lone object as a list of one.
+func decodeOneOrMany[T any](b []byte, out *[]T) error {
+	b = bytes.TrimSpace(b)
+	switch {
+	case bytes.Equal(b, []byte("null")):
+		*out = nil
+		return nil
+	case len(b) > 0 && b[0] == '{':
+		var one T
+		if err := json.Unmarshal(b, &one); err != nil {
+			return err
+		}
+		*out = []T{one}
+		return nil
+	default:
+		return json.Unmarshal(b, out)
+	}
 }
 
 // Cosmos is a Cosmos server's containers and reverse-proxy routes. Only

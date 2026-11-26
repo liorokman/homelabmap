@@ -60,12 +60,11 @@ password you create on first run.
    curl -O https://raw.githubusercontent.com/liorokman/homelabmap/main/compose.yaml
    curl -o .env https://raw.githubusercontent.com/liorokman/homelabmap/main/.env.example
    openssl rand -hex 32      # paste as HOMELABMAP_AGENT_TOKEN
-   $EDITOR .env              # public URL, OIDC client (optional), subnets, credentials
+   $EDITOR .env              # public URL, OIDC client (optional)
    ```
 
 3. **Start it:** `docker compose up -d`, and point your reverse proxy at
-   `127.0.0.1:8080`. The first scan starts right away and takes a minute or
-   two.
+   `127.0.0.1:8080`.
 
 4. **Without OIDC, create your account:** open the public URL. The sign-in
    page asks for a setup code, a username and a password (at least 12
@@ -91,28 +90,46 @@ password you create on first run.
    reset-code`.) The code works once, for 15 minutes; a reset signs out all
    sessions.
 
+5. **Open Settings** from the menu under your name, enter the subnets to
+   scan and any [credentials](#data-sources-and-credentials), and save. The
+   first scan starts within a minute and takes a minute or two.
+
+**Upgrading from a version without the Settings page?** Leave your old scan
+variables (`HOMELABMAP_SUBNETS`, `HOMELABMAP_SNMP_*`, `HOMELABMAP_UNIFI_*`,
+`HOMELABMAP_PVE_*`, `HOMELABMAP_COSMOS_*`, and the web's scan interval and
+retention) in place for the first start. They're copied to the Settings page
+once, into settings that are still empty, and the logs say when you can
+remove them.
+
 The two images are `ghcr.io/liorokman/homelabmap-web` and
 `ghcr.io/liorokman/homelabmap-scanner`.
 
 ## Data sources and credentials
 
-Every source is optional except the nmap sweep; the more you configure, the
-better the map. Give homelabmap read-only access only.
+All of these are entered on the **Settings page**. Every source is optional
+except the nmap sweep; the more you configure, the better the map. Give
+homelabmap read-only access only. Secrets are write-only on the page: once
+saved, they're never shown again, only replaced or removed.
 
 ### SNMP
 
-Switches, routers, Linux hosts (net-snmp) and printers. Set
-`HOMELABMAP_SNMP_COMMUNITY` to a read-only v2c community, or use SNMPv3:
-`HOMELABMAP_SNMP_VERSION=3`, `HOMELABMAP_SNMP_USER`, and optionally
-`HOMELABMAP_SNMP_AUTH_PROTO`/`_AUTH_PASS`/`_PRIV_PROTO`/`_PRIV_PASS`.
+Switches, routers, Linux hosts (net-snmp) and printers. Set the **default
+credentials** (a read-only v2c community, or an SNMPv3 user with optional
+authentication and privacy) to try on every host in the subnets. Hosts that
+need others get **per-host credentials**, matched by IP address, subnet
+(CIDR) or hostname; the most specific match wins (an IP or hostname beats a
+subnet, a longer prefix beats a shorter one). Hosts listed by IP or hostname
+are queried even if the sweep misses them.
 
 ### UniFi
 
 Wi-Fi clients and their access points, wired clients on UniFi switches,
 device aliases, and recently disconnected clients. Create an API key on the
-UniFi OS console (Settings → Control Plane → Integrations) and set
-`HOMELABMAP_UNIFI_URL` and `HOMELABMAP_UNIFI_API_KEY`. Other sites than
-`default`: `HOMELABMAP_UNIFI_SITE`.
+UniFi OS console (Settings → Control Plane → Integrations) and add the
+console with its hostname and the key. The key acts as the admin who
+creates it, so create it while signed in as a view-only admin made for
+homelabmap. You can add several consoles; each has its own site (`default`
+unless you changed it). The UniFi tab on the Settings page has the steps.
 
 ### Proxmox service account
 
@@ -131,13 +148,10 @@ pveum acl modify / --users homelabmap@pve --roles PVEAuditor
 pveum user token add homelabmap@pve scanner --privsep 0
 ```
 
-The last command prints the token's secret **once**. Set:
-
-```
-HOMELABMAP_PVE_URL=https://pve.example.net:8006
-HOMELABMAP_PVE_TOKEN_ID=homelabmap@pve!scanner
-HOMELABMAP_PVE_TOKEN_SECRET=<the secret>
-```
+The last command prints the token's secret **once**. On the Settings page,
+add a Proxmox cluster with any node's hostname (port 8006 unless you say
+otherwise), the token ID `homelabmap@pve!scanner` and that secret. Several
+clusters can be added.
 
 * **VM IP addresses** come from the QEMU guest agent, which `PVEAuditor`
   doesn't cover. To include them, also give the user the guest-agent audit
@@ -153,7 +167,7 @@ HOMELABMAP_PVE_TOKEN_SECRET=<the secret>
 * **Token privilege separation:** with `--privsep 1` instead, the token gets
   no rights of its own; grant the same roles to the token
   (`--tokens 'homelabmap@pve!scanner'`) instead of the user.
-* **Self-signed certificate:** set `HOMELABMAP_PVE_INSECURE_TLS=true`, or
+* **Self-signed certificate:** tick "Don't verify the TLS certificate", or
   better, give the node a certificate your host trusts.
 
 The same steps work in the web UI under Datacenter → Permissions (Users,
@@ -165,7 +179,16 @@ If you run [Cosmos](https://cosmos-cloud.io), its Docker containers and
 reverse-proxy routes appear under their host. The token needs **only**
 "Resources Read" (20) and "Configuration Read" (30), restricted to the
 scanner host's IP. The Cosmos UI's "read only" token also grants user and
-log access; narrow it through the API with an admin token:
+log access, so create the token through the API with an admin token (the
+response holds the new token, shown once):
+
+```sh
+curl -X POST -H "Authorization: Bearer $COSMOS_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"homelabmap","permissions":[20,30],"ipWhitelist":["192.0.2.10/32"]}' \
+  https://cosmos.example.net/cosmos/api/api-tokens
+```
+
+or narrow an existing `homelabmap` token in place (it keeps its secret):
 
 ```sh
 curl -X PUT -H "Authorization: Bearer $COSMOS_ADMIN_TOKEN" -H 'Content-Type: application/json' \
@@ -175,31 +198,50 @@ curl -X PUT -H "Authorization: Bearer $COSMOS_ADMIN_TOKEN" -H 'Content-Type: app
 
 Configuration Read exposes Cosmos's whole configuration to the token holder,
 including private keys; homelabmap keeps only the routes. Drop it (`[20]`)
-to show containers without links. Set `HOMELABMAP_COSMOS_URL` and
-`HOMELABMAP_COSMOS_TOKEN`.
+to show containers without links. Add the server and the token on the
+Settings page.
 
 ## Configuration reference
 
-All settings are environment variables; `.env.example` has the common ones.
+### Settings page
+
+Open it from the menu under your name. With OIDC, only members of
+`HOMELABMAP_OIDC_ADMIN_GROUPS` see it (everyone, if that's empty); the
+password account always does. Changes apply to the next scan; the passive
+listener follows within a minute. Each section is a tab; credentials are
+listed in a table, with the steps for creating them underneath. Saving an
+added or edited entry saves it at once; the other settings are saved with
+the bar at the bottom.
+
+| Section | Settings (defaults) |
+|---|---|
+| Scanning | subnets; full scan every (`1h`); scan timeout (`15m`); history kept (`14d`); absent devices leave the map after (`30d`); re-fingerprint after (`7d`); OS fingerprints per scan (`48`, `0` = off); quick scans of new devices per hour (`30`, `0` = off); passive listening (on); SSDP (on) |
+| SNMP | default credentials (none); per-host credentials, each with a description; extra hosts to query; timeout (`1.5s`), retries (`1`), hosts at once (`48`) |
+| Proxmox VE | per cluster: host (port `8006`), description, token ID, token secret, skip TLS verification |
+| UniFi | per console: host, description, API key, site (`default`), disconnected clients from the last (`720`) hours, skip TLS verification |
+| Cosmos | per server: host, description, API token, skip TLS verification |
+| Sign-in | stay signed in for (`12h`) |
+
+Hosts are a hostname or IP, optionally with `:port`, or a full `https://`
+URL.
+
+### Environment
+
+Only what's needed before the Settings page can work lives in the
+environment; `.env.example` has it.
 
 **Web** (`homelabmap-web`)
 
 | Variable | Default | |
 |---|---|---|
 | `HOMELABMAP_PUBLIC_URL` | (required) | URL users open; must be `https` with login |
-| `HOMELABMAP_AGENT_TOKEN` | (required) | shared with the scanner, ≥ 32 characters |
+| `HOMELABMAP_AGENT_TOKEN` | (required) | shared with the scanner, ≥ 32 characters; also encrypts the stored secrets |
 | `HOMELABMAP_OIDC_ISSUER`, `_CLIENT_ID` | | OpenID Connect provider and client; both empty = password login |
 | `HOMELABMAP_OIDC_CLIENT_SECRET` | | confidential clients only |
 | `HOMELABMAP_OIDC_ALLOWED_GROUPS` | any | comma-separated `groups` claim values |
+| `HOMELABMAP_OIDC_ADMIN_GROUPS` | everyone | groups that may open the Settings page |
 | `HOMELABMAP_OIDC_PROVIDER_NAME` | | "Sign in with …" label |
 | `HOMELABMAP_OIDC_SCOPES` | `openid profile email` | |
-| `HOMELABMAP_SCAN_INTERVAL` | `1h` | full scan interval |
-| `HOMELABMAP_RETENTION` | `336h` | scan history kept |
-| `HOMELABMAP_FORGET_AFTER` | `720h` | absent devices leave the map after this |
-| `HOMELABMAP_OS_RESCAN` | `168h` | re-fingerprint a device at most this often |
-| `HOMELABMAP_OS_SCAN_MAX` | `48` | OS fingerprints per scan |
-| `HOMELABMAP_PROBE_MAX_PER_HOUR` | `30` | quick scans of new devices; `0` disables |
-| `HOMELABMAP_SESSION_TTL` | `12h` | login session lifetime |
 | `HOMELABMAP_DB` | `/data/homelabmap.db` | SQLite database |
 | `HOMELABMAP_LISTEN`, `_AGENT_LISTEN` | `:8080`, `:8081` | UI and scanner API |
 | `HOMELABMAP_INSECURE_NO_AUTH` | `false` | development only; loopback UI only |
@@ -208,16 +250,16 @@ All settings are environment variables; `.env.example` has the common ones.
 
 | Variable | Default | |
 |---|---|---|
-| `HOMELABMAP_SUBNETS` | (required) | e.g. `192.168.1.0/24`, comma-separated |
 | `HOMELABMAP_AGENT_TOKEN` | (required) | same as the web's |
 | `HOMELABMAP_SERVER` | `http://127.0.0.1:8097` | the web's scanner API |
-| `HOMELABMAP_SNMP_*` | v2c | see [SNMP](#snmp); also `_SEEDS`, `_TIMEOUT` (`1.5s`), `_RETRIES` (`1`), `_CONCURRENCY` (`48`) |
-| `HOMELABMAP_UNIFI_*` | | `_URL`, `_API_KEY`, `_SITE` (`default`), `_INSECURE_TLS`, `_HISTORY_HOURS` (`720`) |
-| `HOMELABMAP_PVE_*` | | `_URL`, `_TOKEN_ID`, `_TOKEN_SECRET`, `_INSECURE_TLS` |
-| `HOMELABMAP_COSMOS_*` | | `_URL`, `_TOKEN`, `_INSECURE_TLS` |
-| `HOMELABMAP_PASSIVE` | `true` | listen for ARP/neighbour discovery |
-| `HOMELABMAP_SSDP` | `true` | UPnP discovery |
-| `HOMELABMAP_JOB_TIMEOUT` | `15m` | longest scan |
+
+**Rotating the agent token** makes the stored secrets unreadable: the
+Settings page marks them, and you enter them again.
+
+The old scan variables (`HOMELABMAP_SCAN_INTERVAL`, `HOMELABMAP_SUBNETS`,
+`HOMELABMAP_SNMP_*` and so on) only seed the Settings page once (see
+[upgrading](#quick-start-docker-compose)); `homelabmap-scanner -once` still
+reads them, since it runs without the web.
 
 ## How the map is built
 

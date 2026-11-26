@@ -206,3 +206,38 @@ func TestPasswordResets(t *testing.T) {
 		t.Errorf("reused code: %v", err)
 	}
 }
+
+func TestSettingsRow(t *testing.T) {
+	s, err := Open(context.Background(), filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	now := time.Unix(1_900_000_000, 0).UTC()
+	if _, err := s.GetSettings(ctx); !errors.Is(err, ErrNotFound) {
+		t.Errorf("empty: %v", err)
+	}
+	v, err := s.PutSettings(ctx, `{"a":1}`, 0, false, now)
+	if err != nil || v != 1 {
+		t.Fatalf("first save: %d %v", v, err)
+	}
+	if _, err := s.PutSettings(ctx, `{"a":2}`, 0, false, now); !errors.Is(err, ErrConflict) {
+		t.Errorf("second first save: %v", err)
+	}
+	if _, err := s.PutSettings(ctx, `{"a":2}`, 7, false, now); !errors.Is(err, ErrConflict) {
+		t.Errorf("stale version: %v", err)
+	}
+	if v, err = s.PutSettings(ctx, `{"a":3}`, 1, true, now.Add(time.Hour)); err != nil || v != 2 {
+		t.Fatalf("update: %d %v", v, err)
+	}
+	r, err := s.GetSettings(ctx)
+	if err != nil || r.Doc != `{"a":3}` || r.Version != 2 || !r.ScannerImported || !r.UpdatedAt.Equal(now.Add(time.Hour)) {
+		t.Errorf("stored: %+v %v", r, err)
+	}
+
+	_ = s.CreateSession(ctx, "adm", Session{Subject: "x", Admin: true, ExpiresAt: now.Add(time.Hour)}, now)
+	if sess, err := s.GetSession(ctx, "adm", now); err != nil || !sess.Admin {
+		t.Errorf("admin session: %+v %v", sess, err)
+	}
+}

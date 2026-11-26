@@ -16,7 +16,7 @@ homelabmap is two containers with deliberately different exposure.
 | Network | **host network** (it needs the LAN segment) | ordinary container network |
 | Listens on | **nothing** | UI on `:8080`; scanner API on `:8081` |
 | Privileges | non-root; `CAP_NET_RAW` + `CAP_NET_ADMIN` only, held as file capabilities by `nmap` and by `homelabmap-listen` (raw sockets only) | non-root, no capabilities |
-| Holds | SNMP, UniFi, Proxmox and Cosmos credentials | OIDC client or the local account's password hash, session store, scan history |
+| Holds | the current job's settings, in memory only | the settings, with SNMP, UniFi, Proxmox and Cosmos credentials encrypted; OIDC client or the local account's password hash; session store; scan history |
 
 * **The scanner never accepts connections.** It long-polls the web
   container for work and posts results back, authenticated with a shared
@@ -49,6 +49,31 @@ homelabmap is two containers with deliberately different exposure.
 * **Put the UI behind HTTPS.** Run a reverse proxy in front of `:8080`; the
   login refuses a non-https public URL.
 
+## Settings and stored credentials
+
+The SNMP, Proxmox, UniFi and Cosmos credentials are entered on the Settings
+page and stored by the web container, which hands them to the scanner with
+each job over the loopback scanner API. **This is a trade-off:** the web
+container faces your reverse proxy, and it now holds the credentials the
+scanner uses. What limits the damage:
+
+* **Encrypted at rest.** Each secret is encrypted with AES-256-GCM under a
+  key derived (HKDF-SHA256) from `HOMELABMAP_AGENT_TOKEN`, and bound to its
+  field, so a copy of the database or a backup reveals nothing without the
+  token, and ciphertexts can't be moved between fields. Rotating the token
+  makes them unreadable; the Settings page marks them for re-entry.
+* **Write-only in the browser.** The API never returns a secret: saved
+  secrets come back as a placeholder, which, sent back, keeps the stored
+  value. A page can replace or remove a secret, never read it.
+* **Administrators only.** With OIDC, only members of
+  `HOMELABMAP_OIDC_ADMIN_GROUPS` can open the Settings page (every user who
+  can sign in, if it is empty). The password account always can. Changes
+  require the same-origin checks as every other change, and two editors
+  can't silently overwrite each other (a stale save is refused).
+* **Logged.** Every change is logged with who made it.
+
+Read-only credentials (below) keep a leak from becoming more than that.
+
 ## Credentials: least privilege
 
 Give the scanner read-only credentials, and nothing more:
@@ -64,8 +89,9 @@ Give the scanner read-only credentials, and nothing more:
   accordingly, or omit Configuration Read (containers are then shown without
   links).
 
-Secrets live in `.env` (never in images or git) and reach the containers as
-environment variables. Collector errors redact URL query strings.
+The agent token and the OIDC client secret live in `.env` (never in images
+or git) and reach the containers as environment variables. Collector errors
+redact URL query strings.
 
 ## What the scanner does on your network
 

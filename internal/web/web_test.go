@@ -141,7 +141,12 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	h.s = New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h.s, err = New(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Something to scan, as an install that has been set up has.
+	h.changeSettings(t, func(s *Settings) { s.Scan.Subnets = []string{"192.0.2.0/24"} })
 	h.s.auth.client = idp.srv.Client()
 	h.s.longPoll = 200 * time.Millisecond
 	handler = h.s.UIHandler()
@@ -153,6 +158,16 @@ func newHarness(t *testing.T, mutate func(*Config)) *harness {
 	h.client.Jar = jar
 	h.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return h
+}
+
+// changeSettings edits the stored settings directly, as a save would.
+func (h *harness) changeSettings(t *testing.T, edit func(*Settings)) {
+	t.Helper()
+	next := h.s.settings().clone()
+	edit(next)
+	if _, err := h.s.saveSettings(context.Background(), next, next.Version); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (h *harness) get(t *testing.T, path string) *http.Response {

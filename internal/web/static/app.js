@@ -441,6 +441,7 @@ async function refreshStatus() {
   state.status = st;
   $('#user').textContent = st.user?.name || st.user?.email || 'Account';
   $('#change-password').hidden = !st.canChangePassword;
+  $('#settings-link').hidden = !st.user?.admin;
 
   const parts = [];
   if (st.active) {
@@ -451,15 +452,20 @@ async function refreshStatus() {
   } else {
     parts.push(`<span class="dot bad"></span><span class="bad-text">Scanner offline (last seen ${esc(ago(st.scannerLastSeen))})</span>`);
   }
+  if (st.needsSubnets) {
+    parts.unshift(st.user?.admin
+      ? '<span class="bad-text">Nothing to scan yet: add your subnets in <a href="/settings">Settings</a></span>'
+      : '<span class="bad-text">Nothing to scan yet: an administrator needs to add the subnets in Settings</span>');
+  }
   if (st.latest) {
     parts.push(`map from ${hhmm(st.latest.finishedAt)} · ${st.latest.nodes} devices, ${st.latest.edges} links`);
   }
-  if (!st.active) parts.push(`next scan ${hhmm(st.nextScanAt)}`);
+  if (!st.active && !st.needsSubnets) parts.push(`next scan ${hhmm(st.nextScanAt)}`);
   if (st.lastSightingAt && Date.now() - new Date(st.lastSightingAt).getTime() < 30 * 60 * 1000) {
     parts.push(`<span title="Last ARP/IPv6 neighbour discovery report ${esc(ago(st.lastSightingAt))}">listening for new devices</span>`);
   }
   $('#status').innerHTML = parts.join(' · ');
-  $('#scan-now').disabled = Boolean(st.active);
+  $('#scan-now').disabled = Boolean(st.active) || st.needsSubnets;
   $('#scan-now').textContent = st.active ? 'Scanning…' : 'Scan now';
 
   const latestId = st.latest?.id ?? null;

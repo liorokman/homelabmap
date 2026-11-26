@@ -132,7 +132,7 @@ func lanServices(t *testing.T) *httptest.Server {
 
 func TestUniFiClassic(t *testing.T) {
 	srv := lanServices(t)
-	u, err := unifiCollect(context.Background(), Config{UniFiURL: srv.URL, UniFiAPIKey: "k", UniFiSite: "default", UniFiHistoryHours: 24})
+	u, err := unifiCollect(context.Background(), obs.UniFiTarget{URL: srv.URL, APIKey: "k", Site: "default", HistoryHours: 24})
 	if err != nil || u.Flavor != "legacy" || len(u.Devices) != 1 || len(u.Clients) != 1 || len(u.Known) != 1 || len(u.History) != 1 {
 		t.Fatalf("classic: %+v %v", u, err)
 	}
@@ -159,12 +159,12 @@ func TestUniFiIntegrationFallback(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	u, err := unifiCollect(context.Background(), Config{UniFiURL: srv.URL, UniFiAPIKey: "k", UniFiSite: "default"})
+	u, err := unifiCollect(context.Background(), obs.UniFiTarget{URL: srv.URL, APIKey: "k", Site: "default"})
 	if err != nil || u.Flavor != "integration" || len(u.Devices) != 2 || len(u.Clients) != 2 {
 		t.Fatalf("integration: %+v %v", u, err)
 	}
 	// Neither API: both errors are reported.
-	if _, err := unifiCollect(context.Background(), Config{UniFiURL: srv.URL + "/elsewhere", UniFiSite: "default"}); err == nil ||
+	if _, err := unifiCollect(context.Background(), obs.UniFiTarget{URL: srv.URL + "/elsewhere", Site: "default"}); err == nil ||
 		!strings.Contains(err.Error(), "classic API") || !strings.Contains(err.Error(), "integration API") {
 		t.Errorf("no API: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestUniFiIntegrationFallback(t *testing.T) {
 
 func TestPVECollect(t *testing.T) {
 	srv := lanServices(t)
-	p, err := pveCollect(context.Background(), Config{PVEURL: srv.URL, PVETokenID: "u@pve!t", PVETokenSecret: "s"})
+	p, err := pveCollect(context.Background(), obs.ProxmoxTarget{URL: srv.URL, TokenID: "u@pve!t", TokenSecret: "s"})
 	if err != nil || len(p.Nodes) != 2 {
 		t.Fatalf("pve: %+v %v", p, err)
 	}
@@ -190,19 +190,19 @@ func TestPVECollect(t *testing.T) {
 	if off.VMID != 102 || off.Name != "desk" || off.IPs != nil {
 		t.Errorf("stopped vm: %+v", off)
 	}
-	if _, err := pveCollect(context.Background(), Config{PVEURL: srv.URL + "/nope"}); err == nil {
+	if _, err := pveCollect(context.Background(), obs.ProxmoxTarget{URL: srv.URL + "/nope"}); err == nil {
 		t.Error("bad URL accepted")
 	}
 }
 
 func TestCosmosCollect(t *testing.T) {
 	srv := lanServices(t)
-	c, err := cosmosCollect(context.Background(), Config{CosmosURL: srv.URL, CosmosToken: "t"})
+	c, err := cosmosCollect(context.Background(), obs.CosmosTarget{URL: srv.URL, Token: "t"})
 	if err != nil || len(c.Containers) != 1 || c.Containers[0].Stack != "site" || len(c.Routes) != 1 ||
 		!slices.Contains(c.HostIPs, "127.0.0.1") {
 		t.Fatalf("cosmos: %+v %v", c, err)
 	}
-	if _, err := cosmosCollect(context.Background(), Config{CosmosURL: srv.URL + "/nope", CosmosToken: "t"}); err == nil {
+	if _, err := cosmosCollect(context.Background(), obs.CosmosTarget{URL: srv.URL + "/nope", Token: "t"}); err == nil {
 		t.Error("bad URL accepted")
 	}
 }
@@ -211,10 +211,10 @@ func testConfig(t *testing.T, srv *httptest.Server) Config {
 	return Config{
 		Subnets:  []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
 		NmapPath: fakeNmap(t), NmapPrivileged: true, OSScanMax: 5,
-		SNMP:     SNMPConfig{Concurrency: 4},
-		UniFiURL: srv.URL, UniFiAPIKey: "k", UniFiSite: "default",
-		PVEURL: srv.URL, PVETokenID: "u@pve!t", PVETokenSecret: "s",
-		CosmosURL: srv.URL, CosmosToken: "t",
+		SNMP:       SNMPConfig{Version: "2c", Community: "public", Concurrency: 4},
+		UniFi:      []obs.UniFiTarget{{URL: srv.URL, APIKey: "k", Site: "default"}},
+		PVE:        []obs.ProxmoxTarget{{URL: srv.URL, TokenID: "u@pve!t", TokenSecret: "s"}},
+		Cosmos:     []obs.CosmosTarget{{URL: srv.URL, Token: "t"}},
 		JobTimeout: time.Minute,
 	}
 }
@@ -228,7 +228,7 @@ func TestScanAndProbe(t *testing.T) {
 	defer cancel()
 
 	res := Scan(ctx, cfg, obs.Job{ID: 7, KnownMACs: []string{"00:00:5e:00:53:10"}}, log)
-	if res.JobID != 7 || len(res.Sweep) != 2 || len(res.SNMP) != 1 || res.UniFi == nil || res.PVE == nil || res.Cosmos == nil {
+	if res.JobID != 7 || len(res.Sweep) != 2 || len(res.SNMP) != 1 || len(res.UniFi) != 1 || res.PVE == nil || len(res.Cosmos) != 1 {
 		t.Fatalf("scan: %+v", res)
 	}
 	// Only the unknown host is fingerprinted.
@@ -240,7 +240,7 @@ func TestScanAndProbe(t *testing.T) {
 	}
 
 	p := Probe(ctx, cfg, obs.Job{ID: 8, Probe: []obs.ProbeTarget{{MAC: "00:00:5e:00:53:30", IPs: []string{"192.0.2.30", "2001:db8::30"}}}}, log)
-	if !p.Probe || p.JobID != 8 || len(p.Sweep) != 2 || len(p.OSScans) != 1 || p.UniFi == nil || p.PVE == nil {
+	if !p.Probe || p.JobID != 8 || len(p.Sweep) != 2 || len(p.OSScans) != 1 || len(p.UniFi) != 1 || p.PVE == nil || p.Cosmos != nil {
 		t.Errorf("probe: %+v", p)
 	}
 }
@@ -252,6 +252,10 @@ type fakeServer struct {
 	results   []obs.Result
 	sightings []obs.Sighting
 	failPolls int
+	settings  obs.ScannerSettings
+	settingsN int
+	legacy    []obs.LegacySettings
+	imported  bool
 	srv       *httptest.Server
 }
 
@@ -298,6 +302,20 @@ func newFakeServer(t *testing.T) *fakeServer {
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	mux.HandleFunc("GET /agent/v1/settings", auth(func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.settingsN++
+		_ = json.NewEncoder(w).Encode(f.settings)
+	}))
+	mux.HandleFunc("POST /agent/v1/legacy-settings", auth(func(w http.ResponseWriter, r *http.Request) {
+		var l obs.LegacySettings
+		_ = json.NewDecoder(r.Body).Decode(&l)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.legacy = append(f.legacy, l)
+		_ = json.NewEncoder(w).Encode(map[string]bool{"imported": f.imported})
+	}))
 	mux.HandleFunc("POST /agent/v1/sightings", auth(func(w http.ResponseWriter, r *http.Request) {
 		var body obs.Sightings
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -330,19 +348,30 @@ func waitFor(t *testing.T, cond func() bool) {
 
 func TestAgentRun(t *testing.T) {
 	fs := newFakeServer(t)
-	fs.jobs = []obs.Job{{ID: 3, Probe: []obs.ProbeTarget{{MAC: "00:00:5e:00:53:30", IPs: []string{"203.0.113.9"}}}}}
-	cfg := Config{Server: fs.srv.URL, AgentToken: "tok", JobTimeout: time.Minute}
+	settings := &obs.ScannerSettings{Subnets: []string{"192.0.2.0/24"}, JobTimeoutSeconds: 60}
+	fs.jobs = []obs.Job{
+		{ID: 3, Settings: settings, Probe: []obs.ProbeTarget{{MAC: "00:00:5e:00:53:30", IPs: []string{"203.0.113.9"}}}},
+		{ID: 4}, // from an older web: no settings
+		{ID: 5, Settings: &obs.ScannerSettings{}},
+	}
+	cfg := Config{Server: fs.srv.URL, AgentToken: "tok"}
 	a := NewAgent(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.Run(ctx) }()
-	waitFor(t, func() bool { n, _ := fs.count(); return n == 1 })
+	waitFor(t, func() bool { n, _ := fs.count(); return n == 3 })
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Errorf("Run returned %v", err)
 	}
-	if fs.results[0].JobID != 3 || !fs.results[0].Probe {
+	if fs.results[0].JobID != 3 || !fs.results[0].Probe || len(fs.results[0].Errors) != 0 {
 		t.Errorf("posted %+v", fs.results[0])
+	}
+	if r := fs.results[1]; r.JobID != 4 || len(r.Errors) != 1 || !strings.Contains(r.Errors[0], "no settings") {
+		t.Errorf("job without settings: %+v", r)
+	}
+	if r := fs.results[2]; len(r.Errors) != 1 || !strings.Contains(r.Errors[0], "no subnets") {
+		t.Errorf("job without subnets: %+v", r)
 	}
 
 	// Wrong token: the poll fails with the status.
@@ -434,5 +463,50 @@ func TestHTTPClientAndRedaction(t *testing.T) {
 	}
 	if got := redactURL("https://h/p?token=secret"); got != "https://h/p" {
 		t.Errorf("redact: %q", got)
+	}
+}
+
+func TestImportLegacy(t *testing.T) {
+	cleanEnv(t)
+	fs := newFakeServer(t)
+	a := NewAgent(Config{Server: fs.srv.URL, AgentToken: "tok"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a.importLegacy(context.Background()) // nothing set: nothing offered
+	if len(fs.legacy) != 0 {
+		t.Fatalf("offered an empty environment: %+v", fs.legacy)
+	}
+	t.Setenv("HOMELABMAP_SUBNETS", "192.0.2.0/24")
+	t.Setenv("HOMELABMAP_SNMP_COMMUNITY", "x")
+	for _, imported := range []bool{true, false} {
+		fs.imported = imported
+		a.importLegacy(context.Background())
+	}
+	if len(fs.legacy) != 2 || fs.legacy[0].Settings.SNMP.Default.Community != "x" || len(fs.legacy[0].Set) != 2 {
+		t.Errorf("offered %+v", fs.legacy)
+	}
+	// An older web without the endpoint: given up at once.
+	old := NewAgent(Config{Server: fs.srv.URL + "/old", AgentToken: "tok"}, a.log)
+	done := make(chan struct{})
+	go func() { old.importLegacy(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("importLegacy kept retrying a 404")
+	}
+}
+
+func TestWatchLoopFollowsSettings(t *testing.T) {
+	fs := newFakeServer(t)
+	fs.settings = obs.ScannerSettings{Subnets: []string{"203.0.113.0/24"}, Passive: true} // no interface there
+	a := NewAgent(Config{Server: fs.srv.URL, AgentToken: "tok", ListenPath: "/nonexistent"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a.settingsEvery = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.WatchLoop(ctx); close(done) }()
+	waitFor(t, func() bool { fs.mu.Lock(); defer fs.mu.Unlock(); return fs.settingsN >= 3 })
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WatchLoop did not stop")
 	}
 }

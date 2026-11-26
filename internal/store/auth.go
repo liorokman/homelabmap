@@ -10,15 +10,17 @@ import (
 // Session is a logged-in user. Only a hash of the cookie value is stored,
 // so a leaked database does not leak usable sessions.
 type Session struct {
-	Subject   string
-	Name      string
-	Email     string
+	Subject string
+	Name    string
+	Email   string
+	// Admin may open the Settings page.
+	Admin     bool
 	ExpiresAt time.Time
 }
 
 func (s *Store) CreateSession(ctx context.Context, idHash string, sess Session, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id_hash, subject, name, email, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, idHash, sess.Subject, sess.Name, sess.Email, unix(now), unix(sess.ExpiresAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions (id_hash, subject, name, email, admin, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, idHash, sess.Subject, sess.Name, sess.Email, sess.Admin, unix(now), unix(sess.ExpiresAt))
 	return err
 }
 
@@ -26,8 +28,8 @@ func (s *Store) CreateSession(ctx context.Context, idHash string, sess Session, 
 func (s *Store) GetSession(ctx context.Context, idHash string, now time.Time) (*Session, error) {
 	var sess Session
 	var exp int64
-	err := s.db.QueryRowContext(ctx, `SELECT subject, name, email, expires_at FROM sessions
-		WHERE id_hash = ? AND expires_at > ?`, idHash, unix(now)).Scan(&sess.Subject, &sess.Name, &sess.Email, &exp)
+	err := s.db.QueryRowContext(ctx, `SELECT subject, name, email, admin, expires_at FROM sessions
+		WHERE id_hash = ? AND expires_at > ?`, idHash, unix(now)).Scan(&sess.Subject, &sess.Name, &sess.Email, &sess.Admin, &exp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

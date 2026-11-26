@@ -21,12 +21,15 @@ type statusResponse struct {
 	ScannerOnline     bool        `json:"scannerOnline"`
 	// LastSightingAt is when the passive listener last reported anything.
 	LastSightingAt *time.Time `json:"lastSightingAt"`
+	// NeedsSubnets: nothing is scanned until subnets are set in Settings.
+	NeedsSubnets bool `json:"needsSubnets"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	resp := statusResponse{User: userFrom(ctx), IntervalSeconds: int(s.cfg.ScanInterval.Seconds()),
-		CanChangePassword: s.cfg.PasswordLogin()}
+	set := s.settings()
+	resp := statusResponse{User: userFrom(ctx), IntervalSeconds: int(set.Scan.Interval.D().Seconds()),
+		CanChangePassword: s.cfg.PasswordLogin(), NeedsSubnets: len(set.Scan.Subnets) == 0}
 	var err error
 	if resp.Latest, _, err = s.store.LatestGraph(ctx); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.serverError(w, "latest graph", err)
@@ -41,7 +44,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, "last requested", err)
 		return
 	}
-	resp.NextScanAt = last.Add(s.cfg.ScanInterval)
+	resp.NextScanAt = last.Add(set.Scan.Interval.D())
 	if seen := s.scannerSeen.Load(); seen != 0 {
 		t := time.Unix(seen, 0).UTC()
 		resp.ScannerLastSeen = &t
@@ -99,6 +102,10 @@ func (s *Server) handleScanNow(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cross-origin request refused", http.StatusForbidden)
 		return
 	}
+	if len(s.settings().Scan.Subnets) == 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "No subnets to scan yet: add them in Settings."})
+		return
+	}
 	sc, created, err := s.store.Enqueue(r.Context(), "manual", s.now())
 	if err != nil {
 		s.serverError(w, "queueing scan", err)
@@ -128,7 +135,7 @@ func (s *Server) runScheduler(ctx context.Context) {
 		last, err := s.store.LastRequested(ctx)
 		if err != nil {
 			s.log.Warn("scheduler", "err", err)
-		} else if now.Sub(last) >= s.cfg.ScanInterval {
+		} else if set := s.settings(); len(set.Scan.Subnets) > 0 && now.Sub(last) >= set.Scan.Interval.D() {
 			if sc, created, err := s.store.Enqueue(ctx, "schedule", now); err != nil {
 				s.log.Warn("scheduling scan", "err", err)
 			} else if created {
@@ -137,7 +144,7 @@ func (s *Server) runScheduler(ctx context.Context) {
 			}
 		}
 		if now.Sub(lastPrune) > time.Hour {
-			if err := s.store.Prune(ctx, now.Add(-s.cfg.Retention), now); err != nil {
+			if err := s.store.Prune(ctx, now.Add(-s.settings().Scan.Retention.D()), now); err != nil {
 				s.log.Warn("pruning", "err", err)
 			}
 			lastPrune = now

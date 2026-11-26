@@ -42,20 +42,7 @@ func Probe(ctx context.Context, cfg Config, job obs.Job, log *slog.Logger) *obs.
 			res.OSScans = scans
 		})
 	}
-	if cfg.UniFiURL != "" {
-		wg.Go(func() {
-			u, err := unifiCollect(ctx, cfg)
-			errs.add("unifi", err)
-			res.UniFi = u
-		})
-	}
-	if cfg.PVEURL != "" {
-		wg.Go(func() {
-			p, err := pveCollect(ctx, cfg)
-			errs.add("pve", err)
-			res.PVE = p
-		})
-	}
+	collectAPIs(ctx, cfg, res, errs, &wg, false)
 	if cfg.SSDP && len(ips) > 0 {
 		wg.Go(func() {
 			all, err := ssdpDiscover(ctx, cfg, lanIface(cfg, res.Self))
@@ -68,6 +55,7 @@ func Probe(ctx context.Context, cfg Config, job obs.Job, log *slog.Logger) *obs.
 		})
 	}
 	wg.Wait()
+	dropEmpty(res)
 
 	res.DNS = reverseDNS(ctx, ips)
 	res.Errors = errs.errs

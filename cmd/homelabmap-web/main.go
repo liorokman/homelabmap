@@ -57,7 +57,11 @@ func run() error {
 		log.Info("password login (no OIDC provider configured)")
 	}
 	log.Info("homelabmap-web starting", "public_url", cfg.PublicURL, "db", cfg.DBPath, "scan_interval", cfg.ScanInterval)
-	return web.New(cfg, st, log).Run(ctx)
+	srv, err := web.New(cfg, st, log)
+	if err != nil {
+		return err
+	}
+	return srv.Run(ctx)
 }
 
 // resetCode prints a one-time password reset code. It runs next to the

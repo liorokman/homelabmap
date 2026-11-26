@@ -32,11 +32,11 @@ func (p *pveClient) get(ctx context.Context, path string, v any) error {
 // pveCollect lists nodes and guests with their NICs. Read-only: a token with
 // the PVEAuditor role is enough. Guest-agent IPs need VM.GuestAgent.Audit
 // (or VM.Monitor on older PVE) and are skipped quietly if not permitted.
-func pveCollect(ctx context.Context, cfg Config) (*obs.PVE, error) {
+func pveCollect(ctx context.Context, t obs.ProxmoxTarget) (*obs.PVE, error) {
 	p := &pveClient{
-		c:    httpClient(cfg.PVEInsecureTLS),
-		base: cfg.PVEURL,
-		hdr:  map[string]string{"Authorization": "PVEAPIToken=" + cfg.PVETokenID + "=" + cfg.PVETokenSecret},
+		c:    httpClient(t.InsecureTLS),
+		base: t.URL,
+		hdr:  map[string]string{"Authorization": "PVEAPIToken=" + t.TokenID + "=" + t.TokenSecret},
 	}
 
 	var status []struct {

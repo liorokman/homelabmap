@@ -28,7 +28,9 @@ type Config struct {
 	OIDCClientSecret  string // optional: PKCE works with public clients
 	OIDCScopes        []string
 	OIDCAllowedGroups []string
-	SessionTTL        time.Duration
+	// OIDCAdminGroups may open the Settings page; empty = every user.
+	OIDCAdminGroups []string
+	SessionTTL      time.Duration
 
 	ScanInterval time.Duration
 	Retention    time.Duration
@@ -62,11 +64,8 @@ func LoadConfig() (Config, error) {
 		OIDCClientSecret: os.Getenv("HOMELABMAP_OIDC_CLIENT_SECRET"),
 		OIDCScopes:       strings.Fields(env("HOMELABMAP_OIDC_SCOPES", "openid profile email")),
 	}
-	for _, g := range strings.Split(os.Getenv("HOMELABMAP_OIDC_ALLOWED_GROUPS"), ",") {
-		if g = strings.TrimSpace(g); g != "" {
-			c.OIDCAllowedGroups = append(c.OIDCAllowedGroups, g)
-		}
-	}
+	c.OIDCAllowedGroups = splitGroups(os.Getenv("HOMELABMAP_OIDC_ALLOWED_GROUPS"))
+	c.OIDCAdminGroups = splitGroups(os.Getenv("HOMELABMAP_OIDC_ADMIN_GROUPS"))
 	var errs []error
 	durations := []struct {
 		dst  *time.Duration
@@ -144,6 +143,16 @@ func LoadConfig() (Config, error) {
 		}
 	}
 	return c, errors.Join(errs...)
+}
+
+func splitGroups(v string) []string {
+	var out []string
+	for _, g := range strings.Split(v, ",") {
+		if g = strings.TrimSpace(g); g != "" {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // DBPathFromEnv is the SQLite database path (HOMELABMAP_DB).

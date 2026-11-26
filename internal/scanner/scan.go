@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -54,30 +55,11 @@ func Scan(ctx context.Context, cfg Config, job obs.Job, log *slog.Logger) *obs.R
 	// 2. SNMP, UniFi and PVE are independent of each other.
 	var wg sync.WaitGroup
 	wg.Go(func() {
+		errs.add("snmp", cfg.SNMP.resolveHosts(ctx))
 		targets := snmpTargets(cfg, sweep, res.Self)
 		res.SNMP = snmpCollect(ctx, cfg.SNMP, targets, errs, log)
 	})
-	if cfg.UniFiURL != "" {
-		wg.Go(func() {
-			u, err := unifiCollect(ctx, cfg)
-			errs.add("unifi", err)
-			res.UniFi = u
-		})
-	}
-	if cfg.PVEURL != "" {
-		wg.Go(func() {
-			p, err := pveCollect(ctx, cfg)
-			errs.add("pve", err)
-			res.PVE = p
-		})
-	}
-	if cfg.CosmosURL != "" {
-		wg.Go(func() {
-			c, err := cosmosCollect(ctx, cfg)
-			errs.add("cosmos", err)
-			res.Cosmos = c
-		})
-	}
+	collectAPIs(ctx, cfg, res, errs, &wg, true)
 	if cfg.SSDP {
 		wg.Go(func() {
 			d, err := ssdpDiscover(ctx, cfg, lanIface(cfg, res.Self))
@@ -86,6 +68,7 @@ func Scan(ctx context.Context, cfg Config, job obs.Job, log *slog.Logger) *obs.R
 		})
 	}
 	wg.Wait()
+	dropEmpty(res)
 
 	// 3. OS fingerprinting for stale or brand-new hosts.
 	targets := osScanTargets(job, sweep, cfg.OSScanMax)
@@ -114,6 +97,9 @@ func snmpTargets(cfg Config, sweep []obs.SweepHost, self obs.Self) []string {
 		}
 	}
 	for _, s := range cfg.SNMP.Seeds {
+		add(s)
+	}
+	for _, s := range cfg.SNMP.overrideIPs() {
 		add(s)
 	}
 	for _, h := range sweep {
@@ -236,4 +222,76 @@ func isVirtualIface(name string) bool {
 		}
 	}
 	return false
+}
+
+// collectAPIs starts the UniFi, Proxmox and (for full scans) Cosmos
+// collectors, one goroutine per configured server. Several Proxmox
+// clusters' nodes are reported together.
+func collectAPIs(ctx context.Context, cfg Config, res *obs.Result, errs *errSink, wg *sync.WaitGroup, cosmos bool) {
+	var mu sync.Mutex
+	label := func(kind, u string, n int) string {
+		if n == 1 {
+			return kind
+		}
+		return kind + " " + hostOf(u)
+	}
+	res.UniFi = make(obs.UniFiList, len(cfg.UniFi))
+	for i, t := range cfg.UniFi {
+		wg.Go(func() {
+			u, err := unifiCollect(ctx, t)
+			errs.add(label("unifi", t.URL, len(cfg.UniFi)), err)
+			if u != nil {
+				res.UniFi[i] = *u
+			}
+		})
+	}
+	if len(cfg.PVE) > 0 {
+		res.PVE = &obs.PVE{}
+	}
+	for _, t := range cfg.PVE {
+		wg.Go(func() {
+			p, err := pveCollect(ctx, t)
+			errs.add(label("pve", t.URL, len(cfg.PVE)), err)
+			if p != nil {
+				mu.Lock()
+				res.PVE.Nodes = append(res.PVE.Nodes, p.Nodes...)
+				mu.Unlock()
+			}
+		})
+	}
+	if !cosmos {
+		return
+	}
+	res.Cosmos = make(obs.CosmosList, len(cfg.Cosmos))
+	for i, t := range cfg.Cosmos {
+		wg.Go(func() {
+			c, err := cosmosCollect(ctx, t)
+			errs.add(label("cosmos", t.URL, len(cfg.Cosmos)), err)
+			if c != nil {
+				res.Cosmos[i] = *c
+			}
+		})
+	}
+}
+
+// dropEmpty removes servers that answered nothing, after collectAPIs.
+func dropEmpty(res *obs.Result) {
+	res.UniFi = slices.DeleteFunc(res.UniFi, func(u obs.UniFi) bool { return u.Flavor == "" })
+	res.Cosmos = slices.DeleteFunc(res.Cosmos, func(c obs.Cosmos) bool { return c.URL == "" })
+	if len(res.UniFi) == 0 {
+		res.UniFi = nil
+	}
+	if len(res.Cosmos) == 0 {
+		res.Cosmos = nil
+	}
+	if res.PVE != nil && len(res.PVE.Nodes) == 0 {
+		res.PVE = nil
+	}
+}
+
+func hostOf(u string) string {
+	if p, err := url.Parse(u); err == nil && p.Host != "" {
+		return p.Host
+	}
+	return u
 }

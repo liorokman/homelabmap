@@ -331,9 +331,9 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 // startLocalSession signs a password user in with a fresh session.
 func (s *Server) startLocalSession(w http.ResponseWriter, r *http.Request, username, returnTo string) {
 	sid := randomToken()
-	exp := s.now().Add(s.cfg.SessionTTL)
+	exp := s.now().Add(s.settings().Login.SessionTTL.D())
 	if err := s.store.CreateSession(r.Context(), hashToken(sid), store.Session{
-		Subject: "local:" + username, Name: username, ExpiresAt: exp,
+		Subject: "local:" + username, Name: username, Admin: true, ExpiresAt: exp,
 	}, s.now()); err != nil {
 		s.serverError(w, "creating session", err)
 		return

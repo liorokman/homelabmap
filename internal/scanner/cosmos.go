@@ -17,11 +17,11 @@ import (
 // cosmosCollect reads a Cosmos server's containers and routes. The token
 // only needs Resources Read and Configuration Read; of the configuration,
 // only the reverse-proxy routes are kept.
-func cosmosCollect(ctx context.Context, cfg Config) (*obs.Cosmos, error) {
-	c := httpClient(cfg.CosmosInsecureTLS)
-	hdr := map[string]string{"Authorization": "Bearer " + cfg.CosmosToken}
-	out := &obs.Cosmos{URL: cfg.CosmosURL}
-	if u, err := url.Parse(cfg.CosmosURL); err == nil {
+func cosmosCollect(ctx context.Context, t obs.CosmosTarget) (*obs.Cosmos, error) {
+	c := httpClient(t.InsecureTLS)
+	hdr := map[string]string{"Authorization": "Bearer " + t.Token}
+	out := &obs.Cosmos{URL: t.URL}
+	if u, err := url.Parse(t.URL); err == nil {
 		if ips, err := net.DefaultResolver.LookupHost(ctx, u.Hostname()); err == nil {
 			out.HostIPs = ips
 		}
@@ -31,7 +31,7 @@ func cosmosCollect(ctx context.Context, cfg Config) (*obs.Cosmos, error) {
 		Status string            `json:"status"`
 		Data   []json.RawMessage `json:"data"`
 	}
-	if err := getJSON(ctx, c, cfg.CosmosURL+"/cosmos/api/servapps", hdr, &apps); err != nil {
+	if err := getJSON(ctx, c, t.URL+"/cosmos/api/servapps", hdr, &apps); err != nil {
 		return nil, fmt.Errorf("servapps: %w", err)
 	}
 	for _, raw := range apps.Data {
@@ -45,7 +45,7 @@ func cosmosCollect(ctx context.Context, cfg Config) (*obs.Cosmos, error) {
 	var conf struct {
 		Data json.RawMessage `json:"data"`
 	}
-	if err := getJSON(ctx, c, cfg.CosmosURL+"/cosmos/api/config", hdr, &conf); err != nil {
+	if err := getJSON(ctx, c, t.URL+"/cosmos/api/config", hdr, &conf); err != nil {
 		return out, fmt.Errorf("config (routes): %w", err)
 	}
 	routes, err := parseCosmosRoutes(conf.Data)

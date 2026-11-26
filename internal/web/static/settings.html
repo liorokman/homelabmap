@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>homelabmap · Settings</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f46e5' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='5' r='2.5'/%3E%3Ccircle cx='5' cy='19' r='2.5'/%3E%3Ccircle cx='19' cy='19' r='2.5'/%3E%3Cpath d='M12 7.5v4M12 11.5l-5.5 5.5M12 11.5l5.5 5.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+<script src="settings.js" type="module"></script>
+</head>
+<body class="settings-page">
+<header class="bar">
+  <a class="brand" href="/">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5l-5.5 5.5M12 11.5l5.5 5.5"/></svg>
+    <span>homelabmap</span>
+  </a>
+  <h1 class="page-title">Settings</h1>
+  <div class="bar-actions"><a class="btn ghost" href="/">Back to the map</a></div>
+</header>
+
+<main class="settings" id="settings" aria-busy="true">
+  <p class="muted" id="loading">Loading…</p>
+</main>
+
+<dialog id="edit-dialog" class="sheet" aria-labelledby="edit-title">
+  <form id="edit-form" novalidate>
+    <div class="sheet-head"><h2 id="edit-title"></h2></div>
+    <div class="sheet-body" id="edit-body"></div>
+    <div class="sheet-foot">
+      <span class="sheet-msg" id="edit-msg" role="alert"></span>
+      <button type="button" class="btn" id="edit-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="edit-save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Setup guides, shown under each tab's table. -->
+<template id="help-snmp">
+  <p>Use read-only credentials, allowed only from the scanner host. SNMP v3 with authentication and privacy is the safer choice: v2c sends the community in clear text.</p>
+  <h4>Linux (net-snmp)</h4>
+  <ol>
+    <li>
+      <p>Install the agent, and the tools for creating users and testing:</p>
+      <pre><code>sudo apt install snmpd snmp libsnmp-dev</code></pre>
+    </li>
+    <li>
+      <p>Debian's default <code>/etc/snmp/snmpd.conf</code> only listens on localhost. Make it listen on the network:</p>
+      <pre><code>sudo sed -i 's/^agentaddress.*/agentaddress udp:161,udp6:[::1]:161/' /etc/snmp/snmpd.conf</code></pre>
+    </li>
+    <li>
+      <p>For SNMP v3, create a read-only user (snmpd must be stopped while you do):</p>
+      <pre><code>sudo systemctl stop snmpd
+sudo net-snmp-create-v3-user -ro -a SHA -A 'AUTH-PASSWORD' -x AES -X 'PRIV-PASSWORD' homelabmap
+sudo systemctl start snmpd</code></pre>
+      <p>Or, for v2c, a read-only community allowed only from the scanner host (replace <code>192.0.2.10</code>):</p>
+      <pre><code>echo 'rocommunity COMMUNITY 192.0.2.10/32' | sudo tee -a /etc/snmp/snmpd.conf
+sudo systemctl restart snmpd</code></pre>
+    </li>
+  </ol>
+  <h4>Switches, routers and printers</h4>
+  <p>Enable SNMP in the device's management interface or CLI. Give it a read-only v3 user or v2c community, and, if the device allows it, restrict access to the scanner host. LLDP or CDP, if the device has them, show what's connected to which port.</p>
+  <h4>Check it</h4>
+  <p>From the scanner host:</p>
+  <pre><code>snmpwalk -v3 -l authPriv -u homelabmap -a SHA -A 'AUTH-PASSWORD' -x AES -X 'PRIV-PASSWORD' switch.example.net system
+snmpwalk -v2c -c COMMUNITY switch.example.net system</code></pre>
+  <p>Either should print the device's name and description.</p>
+</template>
+
+<template id="help-proxmox">
+  <p>homelabmap needs a read-only API token. Run these as root on any node of the cluster; users and tokens are shared across the cluster.</p>
+  <ol>
+    <li>
+      <p>Create a user that only exists for homelabmap:</p>
+      <pre><code>pveum user add homelabmap@pve --comment "homelabmap (read-only)"</code></pre>
+    </li>
+    <li>
+      <p>Give it read-only access to nodes, VMs and containers:</p>
+      <pre><code>pveum acl modify / --users homelabmap@pve --roles PVEAuditor</code></pre>
+    </li>
+    <li>
+      <p><strong>Optional:</strong> to show VM IP addresses (from the QEMU guest agent), also allow it to read the guest agent. On Proxmox VE 9:</p>
+      <pre><code>pveum role add HomelabmapGuestAgent --privs VM.GuestAgent.Audit
+pveum acl modify /vms --users homelabmap@pve --roles HomelabmapGuestAgent</code></pre>
+      <p>On older versions, use <code>VM.Monitor</code> instead of <code>VM.GuestAgent.Audit</code>. Without it, VMs are still shown, placed by their MAC address.</p>
+    </li>
+    <li>
+      <p>Create the token. It shares the user's read-only rights:</p>
+      <pre><code>pveum user token add homelabmap@pve scanner --privsep 0</code></pre>
+      <p>This prints the secret (<code>value</code>) <strong>once</strong>; copy it now.</p>
+    </li>
+  </ol>
+  <h4>Fill in</h4>
+  <dl>
+    <dt>Host</dt><dd>Any node's hostname. Port 8006 is assumed.</dd>
+    <dt>API token ID</dt><dd><code>homelabmap@pve!scanner</code></dd>
+    <dt>Token secret</dt><dd>The <code>value</code> from step 4.</dd>
+  </dl>
+  <h4>Check it</h4>
+  <pre><code>curl -s -H 'Authorization: PVEAPIToken=homelabmap@pve!scanner=SECRET' \
+  https://pve.example.net:8006/api2/json/cluster/resources?type=vm</code></pre>
+  <p>This should list your VMs and containers. Add <code>-k</code> if the node has a self-signed certificate, and tick "Skip TLS verification" for it here as well. A certificate your scanner host trusts is the better fix.</p>
+  <p class="muted">With <code>--privsep 1</code>, the token gets no rights of its own: grant the roles above with <code>--tokens 'homelabmap@pve!scanner'</code> instead of <code>--users</code>. The web UI has the same steps under Datacenter → Permissions.</p>
+</template>
+
+<template id="help-unifi">
+  <p>homelabmap reads the UniFi Network application on a UniFi OS console (Cloud Gateway, Dream Machine, Cloud Key or UniFi OS Server) with an API key. UniFi has no command line for creating keys, so steps 1 and 2 use the console's web UI.</p>
+  <ol>
+    <li>
+      <p><strong>Recommended:</strong> create a view-only admin for homelabmap. In UniFi OS, open <em>Admins &amp; Users</em> and add an admin restricted to local access, with the <em>View Only</em> role for the Network application. An API key acts with the rights of the admin who creates it.</p>
+    </li>
+    <li>
+      <p>Sign in as that admin. In the Network application, open <em>Settings → Control Plane → Integrations</em>, and create an API key named <code>homelabmap</code>. The key is shown <strong>once</strong>; copy it now.</p>
+    </li>
+    <li>
+      <p>Find the site's short name: it's the part after <code>/network/</code> in the console's address bar, such as <code>/network/<strong>default</strong>/dashboard</code>. The first site is always <code>default</code>.</p>
+    </li>
+  </ol>
+  <h4>Fill in</h4>
+  <dl>
+    <dt>Host</dt><dd>The console's hostname. Port 443 is assumed.</dd>
+    <dt>API key</dt><dd>The key from step 2.</dd>
+    <dt>Site</dt><dd>The short name from step 3.</dd>
+  </dl>
+  <h4>Check it</h4>
+  <pre><code>curl -s -H 'X-API-KEY: KEY' \
+  https://unifi.example.net/proxy/network/api/s/default/stat/device | head -c 300</code></pre>
+  <p>This should start with <code>{"meta":{"rc":"ok"}</code>. Consoles usually have a self-signed certificate: add <code>-k</code>, and tick "Skip TLS verification" for it here as well.</p>
+  <p class="muted">"Show disconnected clients" keeps devices that have recently left the Wi-Fi on the map. Use 0 to show only connected clients.</p>
+</template>
+
+<template id="help-cosmos">
+  <p>homelabmap needs a Cosmos API token with two permissions: <strong>Resources Read</strong> (20), for the containers, and <strong>Configuration Read</strong> (30), for the reverse-proxy routes. The UI's "read only" token also grants user and log access, so create the token through the API instead.</p>
+  <ol>
+    <li>
+      <p>You need an admin token to create it. If you don't have one, create a temporary one in the Cosmos UI and delete it after step 2.</p>
+    </li>
+    <li>
+      <p>Create the token, allowed only from the scanner host's IP address (replace <code>192.0.2.10</code>):</p>
+      <pre><code>curl -s -X POST -H "Authorization: Bearer $COSMOS_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"homelabmap","description":"homelabmap (read-only)","permissions":[20,30],"ipWhitelist":["192.0.2.10/32"]}' \
+  https://cosmos.example.net/cosmos/api/api-tokens</code></pre>
+      <p>The response contains the token <strong>once</strong>; copy it now.</p>
+    </li>
+    <li>
+      <p>Already have a <code>homelabmap</code> token? Narrow it in place instead. It keeps its secret:</p>
+      <pre><code>curl -s -X PUT -H "Authorization: Bearer $COSMOS_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"permissions":[20,30],"ipWhitelist":["192.0.2.10/32"]}' \
+  https://cosmos.example.net/cosmos/api/api-tokens/homelabmap</code></pre>
+    </li>
+  </ol>
+  <p>Configuration Read gives the token holder Cosmos's whole configuration, including private keys; homelabmap keeps only the routes. Use <code>[20]</code> to show containers without their links.</p>
+  <h4>Fill in</h4>
+  <dl>
+    <dt>Host</dt><dd>Cosmos's own hostname. Port 443 is assumed.</dd>
+    <dt>API token</dt><dd>The token from step 2.</dd>
+  </dl>
+  <h4>Check it</h4>
+  <p>From the scanner host:</p>
+  <pre><code>curl -s -H 'Authorization: Bearer TOKEN' https://cosmos.example.net/cosmos/api/servapps | head -c 300</code></pre>
+  <p>This should list your containers.</p>
+</template>
+
+<footer class="savebar" id="savebar" hidden>
+  <span class="savebar-msg" id="save-msg" role="status" aria-live="polite"></span>
+  <button type="button" class="btn" id="discard">Discard changes</button>
+  <button type="button" class="btn primary" id="save">Save</button>
+</footer>
+</body>
+</html>

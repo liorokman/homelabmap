@@ -1,6 +1,9 @@
 package obs
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestNormMAC(t *testing.T) {
 	tests := []struct{ in, want string }{
@@ -33,5 +36,25 @@ func TestMACBits(t *testing.T) {
 	}
 	if IsMulticast("04:31:23:7f:f1:22") {
 		t.Error("unicast reported as multicast")
+	}
+}
+
+func TestOneOrManyDecoding(t *testing.T) {
+	var old Result
+	if err := json.Unmarshal([]byte(`{"unifi":{"flavor":"legacy"},"cosmos":{"url":"https://c.example"}}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if len(old.UniFi) != 1 || old.UniFi[0].Flavor != "legacy" || len(old.Cosmos) != 1 || old.Cosmos[0].URL != "https://c.example" {
+		t.Errorf("stored single objects: %+v", old)
+	}
+	var cur Result
+	if err := json.Unmarshal([]byte(`{"unifi":[{"flavor":"a"},{"flavor":"b"}],"cosmos":null}`), &cur); err != nil {
+		t.Fatal(err)
+	}
+	if len(cur.UniFi) != 2 || cur.Cosmos != nil {
+		t.Errorf("lists: %+v", cur)
+	}
+	if err := json.Unmarshal([]byte(`{"unifi":{"flavor":1}}`), &cur); err == nil {
+		t.Error("bad object accepted")
 	}
 }
